@@ -1,7 +1,7 @@
 # WRecorder
-This repo contains the startup code for broadcasting & receiving the camera through GStreamer.
+This repo contains the startup code for broadcasting & receiving the camera.
 
-## Command to launch a camera on the raspberry pi:
+## GSTREAMER: Command to launch a camera on the raspberry pi using:
 **Parameters**
 
 *ip*: IP of the computer that will be receiving the broadcast, accessible through `hostname -I`
@@ -15,7 +15,7 @@ This repo contains the startup code for broadcasting & receiving the camera thro
 python start_cam.py -ip=172.20.10.3 -port=5000 -video=0
 ```
 
-## Command to receive camera data on another computer:
+## GSTREAMER: Command to receive camera data on another computer:
 **Parameters**
 
 *port*: Port that the data will be received through, must be the same for the corresponding broadcasting command
