@@ -5,7 +5,7 @@ import numpy as np
 
 context = zmq.Context()
 footage_socket = context.socket(zmq.SUB)
-footage_socket.bind('tcp://*:5555')
+footage_socket.connect('tcp://localhost:5555')
 footage_socket.setsockopt_string(zmq.SUBSCRIBE, str(''))
 
 while True:
