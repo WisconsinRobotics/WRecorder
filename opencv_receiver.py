@@ -8,6 +8,9 @@ footage_socket = context.socket(zmq.SUB)
 footage_socket.connect('tcp://localhost:5555')
 footage_socket.setsockopt_string(zmq.SUBSCRIBE, str(''))
 
+print("Receiving data on port 5555...")
+print("Press 'q' to quit")
+
 while True:
     try:
         frame = footage_socket.recv_string()
