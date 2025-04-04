@@ -1,6 +1,8 @@
 # WRecorder
 This repo contains the startup code for broadcasting & receiving the camera.
 
+## THE FOLLOWING DOCUMENTATION IS OLD AND NEEDS TO BE UPDATED!!!
+
 ## GSTREAMER: Command to launch a camera on the raspberry pi using:
 **Parameters**
 
