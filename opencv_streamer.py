@@ -4,8 +4,9 @@ import zmq
 import socket
 import time
 import argparse
+import subprocess
 
-BROADCAST_IP = socket.gethostbyname(socket.gethostname())
+BROADCAST_IP = subprocess.check_output('hostname -I', shell=True).decode().split(" ")[0]
 
 def broadcast_ip(discovery_port, discovery_timeout):
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -16,6 +17,8 @@ def broadcast_ip(discovery_port, discovery_timeout):
         broadcast_socket.sendto(f'IP_BROADCASTER:tcp://{BROADCAST_IP}:{discovery_port}'.encode('utf8'), (BROADCAST_IP, discovery_port))
         time.sleep(1)
         connection_countdown -= 1
+
+b'daw'.decode().split(" ")
 
 def broadcast_camera_data(port, camera_id):
     context = zmq.Context()

@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     broadcast_ip = None
     if (auto_ip_discovery):
-        print(f"Receiving IP for {discovery_timeout} seconds...")
+        print(f"Receiving IP at port {discovery_port} for {discovery_timeout} seconds...")
         broadcast_ip = receive_ip(discovery_port, discovery_timeout)
         if broadcast_ip:
             print(f"Found broadcaster at {broadcast_ip}!")
