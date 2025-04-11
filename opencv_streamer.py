@@ -8,7 +8,8 @@ import subprocess
 import ipaddress
 
 BROADCAST_IP = subprocess.check_output('hostname -I', shell=True).decode().split(" ")[0]
-DISCOVERY_IP = ipaddress.IPv4Network(f"{BROADCAST_IP}/28", strict=False).broadcast_address.exploded
+SUBNET_MASK = subprocess.check_output('ip addr show', shell=True).decode().split(f"inet {BROADCAST_IP}/")[-1].split(" ")[0]
+DISCOVERY_IP = ipaddress.IPv4Network(f"{BROADCAST_IP}/{SUBNET_MASK}", strict=False).broadcast_address.exploded
 
 def broadcast_ip(discovery_port, discovery_timeout):
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
