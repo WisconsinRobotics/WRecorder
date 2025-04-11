@@ -3,32 +3,27 @@ import zmq
 import base64
 import numpy as np
 import socket
+import argparse
 
-BROADCASTER_IP = None
-
-def receive_ip(receiving_time_limit=30):
-    global BROADCASTER_IP
-    DISCOVERY_PORT = 5556
-
+def receive_ip(discovery_port, discovery_timeout):
     receiver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    receiver_socket.bind(('', DISCOVERY_PORT))
-    receiver_socket.settimeout(receiving_time_limit)
+    receiver_socket.bind(('',discovery_port))
+    receiver_socket.settimeout(discovery_timeout)
 
     try:
         while True:
             data, addr = receiver_socket.recvfrom(1024)
-            BROADCASTER_IP = data.decode().split('//')[-1].split(':')[0]
-            break
+            return data.decode().split('//')[-1].split(':')[0]
     except socket.timeout:
         print("No broadcaster found.")
 
-def receive_camera_data():
+def receive_camera_data(ip, port):
     context = zmq.Context()
     footage_socket = context.socket(zmq.SUB)
-    footage_socket.connect(f'tcp://{BROADCASTER_IP}:5555')
+    footage_socket.connect(f'tcp://{ip}:{port}')
     footage_socket.setsockopt_string(zmq.SUBSCRIBE, str(''))
 
-    print("Receiving data on port 5555...")
+    print(f"Receiving data on port {port}...")
     print("Press 'q' to quit")
 
     while True:
@@ -46,11 +41,30 @@ def receive_camera_data():
             break
 
 if __name__ == "__main__":
-    print("Receiving IP for 10 seconds...")
-    receive_ip(10)
-    if BROADCASTER_IP:
-        print(f"Found broadcaster at {BROADCASTER_IP}")
-        print("Starting camera stream...")
-        receive_camera_data()
-    else:
-        print("No broadcaster found.")
+    # Necessary arguments:
+    # - auto-ip-discovery
+    # - discovery-port
+    # - discovery-timeout
+    # - broadcast-port
+    parser = argparse.ArgumentParser(prog='opencv_receiver', description='Receiving camera data using opencv2')
+    parser.add_argument('--auto-ip-discovery', default="off")
+    parser.add_argument('--discovery-port', type=int, default=5556)
+    parser.add_argument('--discovery-timeout', type=int, default=15)
+    parser.add_argument('--broadcast-port', type=int, default=5555)
+
+    args = parser.parse_args()
+    auto_ip_discovery = args.auto_ip_discovery == "on"
+    discovery_port = args.discovery_port
+    discovery_timeout = args.discovery_timeout
+    broadcast_port = args.broadcast_port
+
+    broadcast_ip = None
+    if (auto_ip_discovery):
+        print(f"Receiving IP for {discovery_timeout} seconds...")
+        broadcast_ip = receive_ip(discovery_port, discovery_timeout)
+        if broadcast_ip:
+            print(f"Found broadcaster at {broadcast_ip}!")
+        else:
+            raise RuntimeError("No broadcasting IP found!")
+    print("Starting camera stream...")
+    receive_camera_data(broadcast_ip, broadcast_port)

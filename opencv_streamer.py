@@ -3,35 +3,32 @@ import cv2
 import zmq
 import socket
 import time
+import argparse
 
-def broadcast_ip(broadcast_time_limit=10):
-    DISCOVERY_PORT = 5556
-    BROADCAST_IP = socket.gethostbyname(socket.gethostname())
+BROADCAST_IP = socket.gethostbyname(socket.gethostname())
 
+def broadcast_ip(discovery_port, discovery_timeout):
     broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-    connection_countdown = broadcast_time_limit  # seconds
+    connection_countdown = discovery_timeout  # seconds
     while connection_countdown > 0:
-        broadcast_socket.sendto(f'IP_BROADCASTER:tcp://{BROADCAST_IP}:5555'.encode('utf8'), (BROADCAST_IP, DISCOVERY_PORT))
+        broadcast_socket.sendto(f'IP_BROADCASTER:tcp://{BROADCAST_IP}:{discovery_port}'.encode('utf8'), (BROADCAST_IP, discovery_port))
         time.sleep(1)
         connection_countdown -= 1
 
-def broadcast_camera_data():
+def broadcast_camera_data(port, camera_id):
     context = zmq.Context()
     footage_socket = context.socket(zmq.PUB)
-    footage_socket.bind('tcp://*:5555') # 172.20.10.3
+    footage_socket.bind(f'tcp://*:{port}') # 172.20.10.3
 
-    print("Streaming data on port 5555...")
-
-    camera = cv2.VideoCapture(0)  # init the camera
+    camera = cv2.VideoCapture(camera_id)  # init the camera
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
 
     while True:
         try:
             grabbed, frame = camera.read()  # grab the current frame
-            # frame = cv2.resize(frame, (640, 480))  # resize the frame
             encoded, buffer = cv2.imencode('.jpg', frame)
             jpg_as_text = base64.b64encode(buffer)
             footage_socket.send(jpg_as_text)
@@ -42,7 +39,29 @@ def broadcast_camera_data():
             break
 
 if __name__ == "__main__":
-    print("Broadcasting IP for 10 seconds...")
-    broadcast_ip(10)
-    print("Starting camera stream...")
-    broadcast_camera_data()
+    # Necessary arguments:
+    # - auto-ip-discovery
+    # - discovery-port
+    # - discovery-timeout
+    # - broadcast-port
+    # - camera-id
+    parser = argparse.ArgumentParser(prog='opencv_streamer', description='Streams camera data using opencv2')
+    parser.add_argument('--auto-ip-discovery', default="off")
+    parser.add_argument('--discovery-port', type=int, default=5556)
+    parser.add_argument('--discovery-timeout', type=int, default=15)
+    parser.add_argument('--broadcast-port', type=int, default=5555)
+    parser.add_argument('--camera-id', type=int, default=0)
+
+    args = parser.parse_args()
+    auto_ip_discovery = args.auto_ip_discovery == "on"
+    discovery_port = args.discovery_port
+    discovery_timeout = args.discovery_timeout
+    broadcast_port = args.broadcast_port
+    camera_id = args.camera_id
+
+    if auto_ip_discovery:
+        print(f"Broadcasting IP on port {discovery_port} for {discovery_timeout} seconds...")
+        broadcast_ip(discovery_port, discovery_timeout)
+    print(f"Starting camera stream on port {broadcast_port}...")
+    broadcast_camera_data(broadcast_port, camera_id)
+    
