@@ -50,15 +50,16 @@ if __name__ == "__main__":
     parser.add_argument('--auto-ip-discovery', default="off")
     parser.add_argument('--discovery-port', type=int, default=5556)
     parser.add_argument('--discovery-timeout', type=int, default=15)
+    parser.add_argument('--broadcast-ip', type=str, default="0.0.0.0")
     parser.add_argument('--broadcast-port', type=int, default=5555)
 
     args = parser.parse_args()
     auto_ip_discovery = args.auto_ip_discovery == "on"
     discovery_port = args.discovery_port
     discovery_timeout = args.discovery_timeout
+    broadcast_ip = args.broadcast_ip
     broadcast_port = args.broadcast_port
 
-    broadcast_ip = None
     if (auto_ip_discovery):
         print(f"Receiving IP at port {discovery_port} for {discovery_timeout} seconds...")
         broadcast_ip = receive_ip(discovery_port, discovery_timeout)
