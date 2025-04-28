@@ -18,7 +18,7 @@ This repo contains the startup code for broadcasting & receiving the camera.
 
 **Example Command**
 ```
-python3 opencv_streamer.py --auto-ip-discovery=on --discovery-timeout=30 --camera-id=0
+python3 opencv_streamer.py --auto-ip-discovery=on --discovery-timeout=30 --broadcast-port=5555 --camera-id=0
 ```
 
 
@@ -37,7 +37,7 @@ python3 opencv_streamer.py --auto-ip-discovery=on --discovery-timeout=30 --camer
 
 **Example Command**
 ```
-python3 opencv_receiver.py --auto-ip-discovery=on --discovery-timeout=30
+python3 opencv_receiver.py --auto-ip-discovery=on --discovery-timeout=30 --broadcast-port=5555
 ```
 
 # GStreamer Method
