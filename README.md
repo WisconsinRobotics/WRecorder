@@ -53,7 +53,7 @@ python3 opencv_receiver.py --auto-ip-discovery=on --discovery-timeout=30 --broad
 
 **Example Command**
 ```sh
-python3 start_cam.py -ip=172.20.10.3 -port=5000 -video=0
+python3 gstreamer_streamer.py -ip=172.20.10.3 -port=5000 -video=0
 ```
 
 ## Command to receive camera data on another computer:
@@ -63,5 +63,5 @@ python3 start_cam.py -ip=172.20.10.3 -port=5000 -video=0
 
 **Example Command**
 ```sh
-python3 start_receiver.py -port=5000
+python3 gstreamer_receiver.py -port=5000
 ```
