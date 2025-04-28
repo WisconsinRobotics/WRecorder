@@ -1,7 +1,7 @@
 # WRecorder
 This repo contains the startup code for broadcasting & receiving the camera.
 
-# OpenCV Method
+# OpenCV Method (Recommended)
 
 ## Launch stream command
 **Parameters**
