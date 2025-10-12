@@ -43,12 +43,6 @@ def broadcast_camera_data(port, camera_id):
             break
 
 if __name__ == "__main__":
-    # Necessary arguments:
-    # - auto-ip-discovery
-    # - discovery-port
-    # - discovery-timeout
-    # - broadcast-port
-    # - camera-id
     parser = argparse.ArgumentParser(prog='opencv_streamer', description='Streams camera data using opencv2')
     parser.add_argument('--auto-ip-discovery', default="off")
     parser.add_argument('--discovery-port', type=int, default=5556)
@@ -68,4 +62,3 @@ if __name__ == "__main__":
         broadcast_ip(discovery_port, discovery_timeout)
     print(f"Starting camera stream on port {broadcast_port}...")
     broadcast_camera_data(broadcast_port, camera_id)
-    
