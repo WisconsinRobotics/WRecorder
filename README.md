@@ -40,6 +40,11 @@ sudo apt install -y v4l-utils gstreamer1.0-tools gstreamer1.0-plugins-good
 
 Note: The repo does not include a requirements.txt. If you want a reproducible environment, create a virtualenv and pin package versions.
 
+# Multi Stream OpenCV Method (Recommended)
+This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) to transmit the frames over the network. It supports multiple simultaneous camera streams by incrementing ports for each stream.
+
+One notable issue that may arise is in limited network bandwith scenarios, the streamers/receivers may lag behind real-time. I am looking into solutions to this. At the moment, if this becomes a problem, consider switching to the single-stream GStreamer method (the single stream OpenCV method will have the same issue).
+
 ## Launch stream command
 **Parameters**
 
@@ -69,7 +74,7 @@ python3 camera_receiver.py --broadcast-ip 192.168.1.227 --base-port 5555 --count
 This command will receive 3 streams on ports 5555, 5556, and 5557 from the broadcasting computer with IP 192.168.1.227.
 
 # Single Stream OpenCV Method (Old)
-Associated files: `opencv_streamer.py`, `opencv_receiver.py`, `demo_ip_discovery_broadcaster.py`, `demo_ip_discovery_receiver.py`
+This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) to transmit the frames over the network. It can only handle a single camera stream at a time.
 
 ## Launch stream command
 **Parameters**
@@ -109,7 +114,7 @@ python3 opencv_receiver.py --auto-ip-discovery=on --discovery-timeout=30 --broad
 ```
 
 # Single Stream GStreamer Method (Old)
-Associated files: `gstreamer_streamer.py`, `gstreamer_receiver.py`, `gstreamer-install.txt`
+This method uses GStreamer to capture and display video frames, and transmit the frames over the network. It can only handle a single camera stream at a time.
 
 ##  Command to launch a camera on the raspberry pi using:
 **Parameters**
@@ -138,28 +143,11 @@ python3 gstreamer_receiver.py -port=5000
 ## Troubleshooting
 
 - No camera detected: confirm device node (e.g., /dev/video0) and permissions. Run `v4l2-ctl --list-devices`.
-- Black frames or corrupted frames: try lowering resolution, increase camera warm-up time, or verify codec settings.
 - Connection refused / cannot connect: check that the broadcaster IP/port matches the receiver and that any firewalls allow the chosen ports.
-- High latency or dropped frames: switch to a lower resolution or reduce frame rate; make sure network bandwidth is sufficient for N streams.
+- High/increasing latency: no fix currently available for multi-stream OpenCV method; switch to a lower resolution or reduce frame rate; make sure network bandwidth is sufficient for N streams.
 - Auto-discovery fails: ensure discovery ports are different from streaming ports and that UDP broadcasts are allowed on the network.
-
-## Tips & best practices
-
-- Use wired Ethernet for low-latency, reliable multi-camera setups.
-- Reserve a contiguous block of ports for the streams to simplify firewall rules (for example 5555..5564 for 10 streams).
-- If you outgrow these scripts, consider switching to RTSP, WebRTC, or a dedicated streaming server for more features and reliability.
 
 ## Related files
 
 - `launch.sh`: example startup script for automatically launching streamer on boot (edit before use).
 - `gstreamer-install.txt`: platform-specific GStreamer installation notes for the GStreamer examples.
-
-## License
-
-This repository doesn't include an explicit license file. Add a LICENSE if you plan to redistribute.
-
-----
-
-If you'd like, I can also:
-- Add a `requirements.txt` or `pyproject.toml` to pin Python dependencies.
-- Create a small systemd service example to auto-start the streamer on Raspberry Pi boot.
