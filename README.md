@@ -8,9 +8,9 @@ Goals:
 - Keep older single-stream OpenCV and GStreamer examples for compatibility.
 
 Contents:
-- Multi-stream (OpenCV, recommended): `camera_streamer.py`, `camera_receiver.py`, `launch.sh`
-- Single-stream (OpenCV, legacy): `opencv_streamer.py`, `opencv_receiver.py`, `demo_ip_discovery_broadcaster.py`, `demo_ip_discovery_receiver.py`
-- Single-stream (GStreamer, legacy): `gstreamer_streamer.py`, `gstreamer_receiver.py`, `gstreamer-install.txt`
+- Multi-stream (OpenCV, recommended): [`camera_streamer.py`](camera_streamer.py), [`camera_receiver.py`](camera_receiver.py), [`launch.sh`](launch.sh)
+- Single-stream (OpenCV, legacy): [`opencv_streamer.py`](opencv_streamer.py), [`opencv_receiver.py`](opencv_receiver.py), [`demo_ip_discovery_broadcaster.py`](demo_ip_discovery_broadcaster.py), [`demo_ip_discovery_receiver.py`](demo_ip_discovery_receiver.py)
+- Single-stream (GStreamer, legacy): [`gstreamer_streamer.py`](gstreamer_streamer.py), [`gstreamer_receiver.py`](gstreamer_receiver.py), [`gstreamer-install.txt`](gstreamer-install.txt)
 
 ## Prerequisites
 
