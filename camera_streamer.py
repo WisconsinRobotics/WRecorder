@@ -42,10 +42,6 @@ def broadcast_camera_data(port: int, camera_id: int, stop_event: threading.Event
                 continue
             jpg_as_text = base64.b64encode(buffer)
 
-            # debug info: size
-            if frame_count % 30 == 0:
-                print(f"[stream-{port}] frame {frame_count}: encoded size={len(jpg_as_text)} bytes")
-
             try:
                 footage_socket.send(jpg_as_text)
             except zmq.ZMQError as e:
