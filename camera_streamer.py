@@ -10,19 +10,25 @@ import threading
 import signal
 from typing import List
 
-def broadcast_camera_data(port: int, camera_id: int, stop_event: threading.Event):
+class BroadcastConfig:
+    def __init__(self, port: int, camera_id: int):
+        self.port = port
+        self.camera_id = camera_id
+        self.jpg_quality = 20
+
+def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
     # Publish frames from a single camera on tcp://*:{port} until stop_event is set.
     context = zmq.Context()
     footage_socket = context.socket(zmq.PUB)
-    bind_addr = f'tcp://*:{port}'
-    print(f"[stream-{port}] Binding PUB socket to {bind_addr}")
+    bind_addr = f'tcp://*:{config.port}'
+    print(f"[stream-{config.port}] Binding PUB socket to {bind_addr}")
     footage_socket.bind(bind_addr) # 172.20.10.3
 
-    camera = cv2.VideoCapture(camera_id)  # init the camera
+    camera = cv2.VideoCapture(config.camera_id)  # init the camera
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
 
-    print(f"[stream-{port}] Camera {camera_id} opened: {camera.isOpened()}")
+    print(f"[stream-{config.port}] Camera {config.camera_id} opened: {camera.isOpened()}")
     frame_count = 0
     try:
         while not stop_event.is_set():
@@ -30,36 +36,35 @@ def broadcast_camera_data(port: int, camera_id: int, stop_event: threading.Event
             frame_count += 1
             if not grabbed or frame is None:
                 if frame_count % 50 == 0:
-                    print(f"[stream-{port}] frame {frame_count}: camera read failed (grabbed={grabbed})")
+                    print(f"[stream-{config.port}] frame {frame_count}: camera read failed (grabbed={grabbed})")
                 time.sleep(0.1)
                 continue
 
             # encode
-            encoded, buffer = cv2.imencode('.jpg', frame)
+            encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpg_quality])
             if not encoded:
                 if frame_count % 50 == 0:
-                    print(f"[stream-{port}] frame {frame_count}: encoding failed")
+                    print(f"[stream-{config.port}] frame {frame_count}: encoding failed")
                 continue
             jpg_as_text = base64.b64encode(buffer)
 
             try:
                 footage_socket.send(jpg_as_text)
             except zmq.ZMQError as e:
-                print(f"[stream-{port}] ZMQ send error: {e}")
+                print(f"[stream-{config.port}] ZMQ send error: {e}")
                 break
     finally:
-        print(f"[stream-{port}] cleaning up camera and socket (frames sent: {frame_count})")
+        print(f"[stream-{config.port}] cleaning up camera and socket (frames sent: {frame_count})")
         camera.release()
         cv2.destroyAllWindows()
         try:
             footage_socket.close()
         except Exception as e:
-            print(f"[stream-{port}] error closing socket: {e}")
+            print(f"[stream-{config.port}] error closing socket: {e}")
         try:
             context.term()
         except Exception as e:
-            print(f"[stream-{port}] error terminating context: {e}")
-
+            print(f"[stream-{config.port}] error terminating context: {e}")
 
 def start_multiple_streams(base_port: int, camera_ids: List[int]):
     ###
@@ -73,7 +78,8 @@ def start_multiple_streams(base_port: int, camera_ids: List[int]):
     for idx, cam_id in enumerate(camera_ids):
         port = base_port + idx
         print(f"[main] Starting thread for camera {cam_id} on port {port}")
-        t = threading.Thread(target=broadcast_camera_data, args=(port, cam_id, stop_event), daemon=True)
+        broadcast_config = BroadcastConfig(port=port, camera_id=cam_id)
+        t = threading.Thread(target=broadcast_camera_data, args=(broadcast_config, stop_event), daemon=True)
         t.start()
         threads.append(t)
         print(f"Started camera {cam_id} on port {port}")
