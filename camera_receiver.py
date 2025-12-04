@@ -13,6 +13,7 @@ def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames:
     """Subscribe to a single publisher at ip:port and display frames until stop_event is set."""
     context = zmq.Context()
     footage_socket = context.socket(zmq.SUB)
+    footage_socket.setsockopt(zmq.CONFLATE, 1)
     footage_socket.connect(f'tcp://{ip}:{port}')
     footage_socket.setsockopt_string(zmq.SUBSCRIBE, '')
     # set a receive timeout so we can check stop_event periodically

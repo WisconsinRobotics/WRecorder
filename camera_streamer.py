@@ -20,6 +20,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
     # Publish frames from a single camera on tcp://*:{port} until stop_event is set.
     context = zmq.Context()
     footage_socket = context.socket(zmq.PUB)
+    footage_socket.setsockopt(zmq.CONFLATE, 1)
     bind_addr = f'tcp://*:{config.port}'
     print(f"[stream-{config.port}] Binding PUB socket to {bind_addr}")
     footage_socket.bind(bind_addr) # 172.20.10.3
