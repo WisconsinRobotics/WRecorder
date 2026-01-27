@@ -92,10 +92,12 @@ if __name__ == "__main__":
     parser.add_argument('--broadcast-ip', type=str, default="0.0.0.0", help='IP of the publisher(s)')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--count', type=int, default=1, help='Number of sequential ports to subscribe to starting at base-port')
+    parser.add_argument('--show-stats', type=str, choices=['on', 'off'], default='off', help='Show streaming statistics')
 
     args = parser.parse_args()
     broadcast_ip = args.broadcast_ip
     ports = [args.base_port + i for i in range(args.count)]
+    show_stats = args.show_stats == 'on'
 
     stop_event, threads, frames, lock, stats = start_multiple_receivers(broadcast_ip, ports)
 
@@ -120,18 +122,19 @@ if __name__ == "__main__":
                     frame = frames.get(k)
                 if frame is None:
                     continue
+                
+                if show_stats:
+                    now = time.time()
+                    if now - prev_time >= 1.0:
+                        with lock:
+                            total = stats.get(k, 0)
+                        prev = prev_bytes.get(k, 0)
+                        rate_bps = (total - prev) / max(1e-6, now - prev_time)
+                        prev_bytes[k] = total
 
-                now = time.time()
-                if now - prev_time >= 1.0:
-                    with lock:
-                        total = stats.get(k, 0)
-                    prev = prev_bytes.get(k, 0)
-                    rate_bps = (total - prev) / max(1e-6, now - prev_time)
-                    prev_bytes[k] = total
-
-                    rate_text = f"{rate_bps/1024:.1f} KB/s"
-                    prev_time = now
-                cv2.putText(frame, rate_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        rate_text = f"{rate_bps/1024:.1f} KB/s"
+                        prev_time = now
+                    cv2.putText(frame, rate_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.imshow(k, frame)
             if cv2.waitKey(30) & 0xFF == ord('q'):
                 stop_event.set()

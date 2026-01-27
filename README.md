@@ -63,9 +63,11 @@ This command will launch 3 streams on ports 5555, 5556, and 5557 from the camera
 
 *count*: Number of camera streams to receive -- `default: 1`
 
+*show-stats*: Toggle if streaming statistics are shown -- `default: off`
+
 **Example Command**
 ```
-python3 camera_receiver.py --broadcast-ip 192.168.1.227 --base-port 5555 --count 3
+python3 camera_receiver.py --broadcast-ip 192.168.1.227 --base-port 5555 --count 3 --show-stats=on
 ```
 This command will receive 3 streams on ports 5555, 5556, and 5557 from the broadcasting computer with IP 192.168.1.227.
 

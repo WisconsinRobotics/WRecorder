@@ -91,7 +91,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='camera_streamer', description='Streams one or more cameras using OpenCV over ZMQ')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--camera-ids', type=int, nargs='+', default=[0], help='List of camera IDs to stream (example: --camera-ids 0 1 2)')
-    parser.add_argument('--jpg-quality', type=int, default=20, help='Quality of jpegs being transmitted (1-100)')
+    parser.add_argument('--jpg-quality', type=int, default=20, help='Quality of jpgs being transmitted (1-100)')
 
     args = parser.parse_args()
 
