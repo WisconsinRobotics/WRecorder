@@ -11,10 +11,10 @@ import signal
 from typing import List
 
 class BroadcastConfig:
-    def __init__(self, port: int, camera_id: int):
+    def __init__(self, port: int, camera_id: int, jpg_quality: int):
         self.port = port
         self.camera_id = camera_id
-        self.jpg_quality = 20
+        self.jpg_quality = jpg_quality
 
 def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
     # Publish frames from a single camera on tcp://*:{port} until stop_event is set.
@@ -67,7 +67,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
         except Exception as e:
             print(f"[stream-{config.port}] error terminating context: {e}")
 
-def start_multiple_streams(base_port: int, camera_ids: List[int]):
+def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: int):
     ###
     # Start a publisher for each camera_id on ports base_port + index.
     #
@@ -79,7 +79,7 @@ def start_multiple_streams(base_port: int, camera_ids: List[int]):
     for idx, cam_id in enumerate(camera_ids):
         port = base_port + idx
         print(f"[main] Starting thread for camera {cam_id} on port {port}")
-        broadcast_config = BroadcastConfig(port=port, camera_id=cam_id)
+        broadcast_config = BroadcastConfig(port=port, camera_id=cam_id, jpg_quality=jpg_quality)
         t = threading.Thread(target=broadcast_camera_data, args=(broadcast_config, stop_event), daemon=True)
         t.start()
         threads.append(t)
@@ -91,13 +91,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='camera_streamer', description='Streams one or more cameras using OpenCV over ZMQ')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--camera-ids', type=int, nargs='+', default=[0], help='List of camera IDs to stream (example: --camera-ids 0 1 2)')
+    parser.add_argument('--jpg-quality', type=int, default=20, help='Quality of jpegs being transmitted (1-100)')
 
     args = parser.parse_args()
 
     base_port = args.base_port
     camera_ids = args.camera_ids
+    jpg_quality = args.jpg_quality
 
-    stop_event, threads = start_multiple_streams(base_port, camera_ids)
+    stop_event, threads = start_multiple_streams(base_port, camera_ids, jpg_quality)
 
     def _signal_handler(signum, frame):
         print('Stopping streams...')

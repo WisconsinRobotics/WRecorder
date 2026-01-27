@@ -1,11 +1,7 @@
 
 # WRecorder
 
-WRecorder contains simple scripts to broadcast and receive camera streams between computers. It was written to be easy to run on Raspberry Pi devices (camera source) and on desktop receivers.
-
-Goals:
-- Provide a lightweight OpenCV-based multi-camera streaming setup (recommended).
-- Keep older single-stream OpenCV and GStreamer examples for compatibility.
+WRecorder contains scripts to broadcast and receive camera streams between computers. It was written to be easy to run on Raspberry Pi devices (camera source) and on desktop receivers.
 
 Contents:
 - Multi-stream (OpenCV, recommended): [`camera_streamer.py`](camera_streamer.py), [`camera_receiver.py`](camera_receiver.py), [`launch.sh`](launch.sh)
@@ -43,8 +39,6 @@ Note: The repo does not include a requirements.txt. If you want a reproducible e
 # Multi Stream OpenCV Method (Recommended)
 This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) to transmit the frames over the network. It supports multiple simultaneous camera streams by incrementing ports for each stream.
 
-One notable issue that may arise is in limited network bandwith scenarios, the streamers/receivers may lag behind real-time. I am looking into solutions to this. At the moment, if this becomes a problem, consider switching to the single-stream GStreamer method (the single stream OpenCV method will have the same issue).
-
 ## Launch stream command
 **Parameters**
 
@@ -52,11 +46,13 @@ One notable issue that may arise is in limited network bandwith scenarios, the s
 
 *camera-ids*: Space-separated list of video device index numbers -- `default: 0`
 
+*jpg-quality*: JPG quality for frame compression (0-100) -- `default: 20`
+
 **Example Command**
 ```
-python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4
+python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30
 ```
-This command will launch 3 streams on ports 5555, 5556, and 5557 from the cameras with IDs 0, 2, and 4.
+This command will launch 3 streams on ports 5555, 5556, and 5557 from the cameras with IDs 0, 2, and 4 with JPG quality set to 30.
 
 ## Launch receiver command
 **Parameters**
