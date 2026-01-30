@@ -80,7 +80,11 @@ def start_multiple_receivers(ip: str, ports: List[int]):
     stats = {}
 
     for port in ports:
-        t = threading.Thread(target=receive_camera_data, args=(ip, port, stop_event, frames, lock, stats), daemon=True)
+        t = threading.Thread(
+            target=receive_camera_data, 
+            args=(ip, port, stop_event, frames, lock, stats), 
+            daemon=True
+        )
         t.start()
         threads.append(t)
         print(f"Started receiver for {ip}:{port}")
