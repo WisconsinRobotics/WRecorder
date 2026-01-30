@@ -36,6 +36,12 @@ sudo apt install -y v4l-utils gstreamer1.0-tools gstreamer1.0-plugins-good
 
 Note: The repo does not include a requirements.txt. If you want a reproducible environment, create a virtualenv and pin package versions.
 
+# How to connect to different networks on the Raspberry Pi
+```
+nmcli dev wifi
+nmtui
+```
+
 # Multi Stream OpenCV Method (Recommended)
 This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) to transmit the frames over the network. It supports multiple simultaneous camera streams by incrementing ports for each stream.
 

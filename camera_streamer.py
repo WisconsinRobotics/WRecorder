@@ -1,14 +1,13 @@
 import base64
 import cv2
 import zmq
-import socket
 import time
 import argparse
-import subprocess
-import ipaddress
-import threading
+import multiprocessing
 import signal
 from typing import List
+import os
+
 
 class BroadcastConfig:
     def __init__(self, port: int, camera_id: int, jpg_quality: int):
@@ -16,7 +15,7 @@ class BroadcastConfig:
         self.camera_id = camera_id
         self.jpg_quality = jpg_quality
 
-def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
+def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.Event):
     # Publish frames from a single camera on tcp://*:{port} until stop_event is set.
     context = zmq.Context()
     footage_socket = context.socket(zmq.PUB)
@@ -28,11 +27,18 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
     camera = cv2.VideoCapture(config.camera_id)  # init the camera
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     print(f"[stream-{config.port}] Camera {config.camera_id} opened: {camera.isOpened()}")
     frame_count = 0
+    last_time = time.time()
+    target_fps = 30.0
+    frame_interval = 1.0 / target_fps
+
     try:
         while not stop_event.is_set():
+            frame_start = time.time()
+
             grabbed, frame = camera.read()  # grab the current frame
             frame_count += 1
             if not grabbed or frame is None:
@@ -54,6 +60,13 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: threading.Event):
             except zmq.ZMQError as e:
                 print(f"[stream-{config.port}] ZMQ send error: {e}")
                 break
+
+            frame_end = time.time()
+            elapsed = frame_end - frame_start
+            sleep_time = frame_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            
     finally:
         print(f"[stream-{config.port}] cleaning up camera and socket (frames sent: {frame_count})")
         camera.release()
@@ -73,24 +86,24 @@ def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: i
     #
     # Returns (stop_event, threads).
     ###
-    stop_event = threading.Event()
-    threads: List[threading.Thread] = []
+    stop_event = multiprocessing.Event()
+    processes: List[multiprocessing.Process] = []
 
     for idx, cam_id in enumerate(camera_ids):
         port = base_port + idx
         print(f"[main] Starting thread for camera {cam_id} on port {port}")
         broadcast_config = BroadcastConfig(port=port, camera_id=cam_id, jpg_quality=jpg_quality)
-        t = threading.Thread(target=broadcast_camera_data, args=(broadcast_config, stop_event), daemon=True)
-        t.start()
-        threads.append(t)
+        p = multiprocessing.Process(target=broadcast_camera_data, args=(broadcast_config, stop_event), daemon=True)
+        p.start()
+        processes.append(p)
         print(f"Started camera {cam_id} on port {port}")
 
-    return stop_event, threads
+    return stop_event, processes
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='camera_streamer', description='Streams one or more cameras using OpenCV over ZMQ')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
-    parser.add_argument('--camera-ids', type=int, nargs='+', default=[0], help='List of camera IDs to stream (example: --camera-ids 0 1 2)')
+    parser.add_argument('--camera-ids', type=int, nargs='+', default=[0], help='List of camera IDs to stream (example: --camera-ids 0 2 4)')
     parser.add_argument('--jpg-quality', type=int, default=20, help='Quality of jpgs being transmitted (1-100)')
 
     args = parser.parse_args()
@@ -99,7 +112,7 @@ if __name__ == "__main__":
     camera_ids = args.camera_ids
     jpg_quality = args.jpg_quality
 
-    stop_event, threads = start_multiple_streams(base_port, camera_ids, jpg_quality)
+    stop_event, processes = start_multiple_streams(base_port, camera_ids, jpg_quality)
 
     def _signal_handler(signum, frame):
         print('Stopping streams...')
@@ -109,12 +122,13 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _signal_handler)
 
     try:
-        for t in threads:
-            while t.is_alive():
-                t.join(timeout=0.5)
+        for p in processes:
+            p.join()
     except KeyboardInterrupt:
         stop_event.set()
-        for t in threads:
-            t.join()
+        for p in processes:
+            p.join(timeout=2)
+            if p.is_alive():
+                p.terminate()
 
     print('All streams stopped')
