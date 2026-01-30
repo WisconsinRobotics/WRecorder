@@ -28,11 +28,13 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 640)
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    camera.set(cv2.CAP_PROP_FPS, 15)
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
     print(f"[stream-{config.port}] Camera {config.camera_id} opened: {camera.isOpened()}")
     frame_count = 0
     last_time = time.time()
-    target_fps = 30.0
+    target_fps = 15.0
     frame_interval = 1.0 / target_fps
 
     try:
