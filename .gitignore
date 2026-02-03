@@ -2,3 +2,5 @@ env
 opencv
 
 __pycache__
+
+.venv
