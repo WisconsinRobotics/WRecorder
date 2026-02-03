@@ -119,6 +119,8 @@ def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: i
 def find_available_cameras() -> List[int]:
     available_cameras = []
     for cam_id in range(8):  # check first 8 camera IDs (0-7)
+        if f"video{cam_id}" not in os.listdir('/dev'):
+            continue
         cap = cv2.VideoCapture(cam_id)
         if cap.isOpened():
             available_cameras.append(cam_id)
@@ -142,6 +144,10 @@ if __name__ == "__main__":
 
     if args.auto_find_cameras.lower() == 'on':
         camera_ids = find_available_cameras()
+
+    if not camera_ids:
+        print("No available cameras found. Exiting.")
+        exit(1)
 
     stop_event, processes = start_multiple_streams(base_port, camera_ids, jpg_quality, target_fps)
 
