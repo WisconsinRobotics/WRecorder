@@ -37,23 +37,27 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
     frame_interval = 1.0 / config.target_fps
 
     try:
+        failed_frame_count = 0
         while not stop_event.is_set():
             frame_start = time.time()
 
             grabbed, frame = camera.read()  # grab the current frame
             frame_count += 1
             if not grabbed or frame is None:
-                if frame_count % 50 == 0:
-                    print(f"[stream-{config.port}] frame {frame_count}: camera read failed (grabbed={grabbed})")
-                time.sleep(0.1)
+                print(f"[stream-{config.port}] frame {frame_count}: camera read failed (grabbed={grabbed})")
+                time.sleep(min(10, 0.2 * 2**failed_frame_count))  # backoff on failures (0.2s, 0.4s, 0.8s, 1.6s, ..., max 10s)
+                failed_frame_count += 1
                 continue
 
             # encode
             encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpg_quality])
             if not encoded:
-                if frame_count % 50 == 0:
-                    print(f"[stream-{config.port}] frame {frame_count}: encoding failed")
+                print(f"[stream-{config.port}] frame {frame_count}: encoding failed")
+                time.sleep(min(10, 0.2 * 2**failed_frame_count))  # backoff on failures
+                failed_frame_count += 1
                 continue
+
+            failed_frame_count = 0  # reset on success
             jpg_as_text = base64.b64encode(buffer)
 
             try:

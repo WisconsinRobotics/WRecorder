@@ -5,8 +5,8 @@ WRecorder contains scripts to broadcast and receive camera streams between compu
 
 Contents:
 - Multi-stream (OpenCV, recommended): [`camera_streamer.py`](camera_streamer.py), [`camera_receiver.py`](camera_receiver.py), [`launch.sh`](launch.sh)
-- Single-stream (OpenCV, legacy): [`opencv_streamer.py`](opencv_streamer.py), [`opencv_receiver.py`](opencv_receiver.py), [`demo_ip_discovery_broadcaster.py`](demo_ip_discovery_broadcaster.py), [`demo_ip_discovery_receiver.py`](demo_ip_discovery_receiver.py)
-- Single-stream (GStreamer, legacy): [`gstreamer_streamer.py`](gstreamer_streamer.py), [`gstreamer_receiver.py`](gstreamer_receiver.py), [`gstreamer-install.txt`](gstreamer-install.txt)
+- Single-stream (OpenCV, legacy): [`old/opencv_streamer.py`](old/opencv_streamer.py), [`old/opencv_receiver.py`](old/opencv_receiver.py), [`old/demo_ip_discovery_broadcaster.py`](old/demo_ip_discovery_broadcaster.py), [`old/demo_ip_discovery_receiver.py`](old/demo_ip_discovery_receiver.py)
+- Single-stream (GStreamer, legacy): [`old/gstreamer_streamer.py`](gstreamer_streamer.py), [`old/gstreamer_receiver.py`](gstreamer_receiver.py), [`gstreamer-install.txt`](gstreamer-install.txt)
 
 ## Prerequisites
 
@@ -17,14 +17,14 @@ Contents:
 Recommended pip install for machines that will run the streamer Python scripts:
 
 ```sh
-python3 -m pip install --user opencv-python-headless pyzmq
+python3 -m pip install opencv-python-headless pyzmq
 ```
 
 
 Recommended pip install for machines that will run the receiver Python scripts:
 
 ```sh
-python3 -m pip install --user opencv-python pyzmq
+python3 -m pip install opencv-python pyzmq
 ```
 
 On Raspberry Pi (if using the Pi Camera or /dev/video devices) you may also need:
@@ -33,8 +33,6 @@ On Raspberry Pi (if using the Pi Camera or /dev/video devices) you may also need
 sudo apt update
 sudo apt install -y v4l-utils gstreamer1.0-tools gstreamer1.0-plugins-good
 ```
-
-Note: The repo does not include a requirements.txt. If you want a reproducible environment, create a virtualenv and pin package versions.
 
 # How to connect to different networks on the Raspberry Pi
 ```
@@ -148,10 +146,12 @@ python3 gstreamer_receiver.py -port=5000
 
 - No camera detected: confirm device node (e.g., /dev/video0) and permissions. Run `v4l2-ctl --list-devices`.
 - Connection refused / cannot connect: check that the broadcaster IP/port matches the receiver and that any firewalls allow the chosen ports.
-- High/increasing latency: no fix currently available for multi-stream OpenCV method; switch to a lower resolution or reduce frame rate; make sure network bandwidth is sufficient for N streams.
 - Auto-discovery fails: ensure discovery ports are different from streaming ports and that UDP broadcasts are allowed on the network.
 
 ## Related files
 
 - `launch.sh`: example startup script for automatically launching streamer on boot (edit before use).
 - `gstreamer-install.txt`: platform-specific GStreamer installation notes for the GStreamer examples.
+
+## Known issues
+- If the camera fully disconnects from the camera pi, the streamer may not recover without a restart. (If the pi disconnects from the network, it should recover when the network is restored.)
