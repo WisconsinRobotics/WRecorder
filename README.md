@@ -50,11 +50,15 @@ This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) 
 
 *camera-ids*: Space-separated list of video device index numbers -- `default: 0`
 
+*auto-find-cameras*: Toggle if available cameras should be auto-detected (on or off, overrides --camera-ids) -- `default: off`
+
 *jpg-quality*: JPG quality for frame compression (0-100) -- `default: 20`
+
+*target-fps*: Target frames per second for streaming -- `default: 30`
 
 **Example Command**
 ```
-python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30
+python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30 --target-fps 30
 ```
 This command will launch 3 streams on ports 5555, 5556, and 5557 from the cameras with IDs 0, 2, and 4 with JPG quality set to 30.
 

@@ -116,10 +116,20 @@ def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: i
 
     return stop_event, processes
 
+def find_available_cameras() -> List[int]:
+    available_cameras = []
+    for cam_id in range(8):  # check first 8 camera IDs (0-7)
+        cap = cv2.VideoCapture(cam_id)
+        if cap.isOpened():
+            available_cameras.append(cam_id)
+            cap.release()
+    return available_cameras
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='camera_streamer', description='Streams one or more cameras using OpenCV over ZMQ')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--camera-ids', type=int, nargs='+', default=[0], help='List of camera IDs to stream (example: --camera-ids 0 2 4)')
+    parser.add_argument('--auto-find-cameras', type=str, help='Automatically find available camera IDs (on or off, overrides --camera-ids)', choices=['on', 'off'], default='off')
     parser.add_argument('--jpg-quality', type=int, default=20, help='Quality of jpgs being transmitted (1-100)')
     parser.add_argument('--target-fps', type=int, default=30, help='Target frames per second for streaming')
 
@@ -129,6 +139,9 @@ if __name__ == "__main__":
     camera_ids = args.camera_ids
     jpg_quality = args.jpg_quality
     target_fps = args.target_fps
+
+    if args.auto_find_cameras.lower() == 'on':
+        camera_ids = find_available_cameras()
 
     stop_event, processes = start_multiple_streams(base_port, camera_ids, jpg_quality, target_fps)
 
