@@ -118,7 +118,7 @@ def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: i
 
 def find_available_cameras() -> List[int]:
     available_cameras = []
-    for cam_id in range(8):  # check first 8 camera IDs (0-7)
+    for cam_id in range(0, 8, 2):  # check first 8 camera IDs (0-7)
         if f"video{cam_id}" not in os.listdir('/dev'):
             continue
         cap = cv2.VideoCapture(cam_id)

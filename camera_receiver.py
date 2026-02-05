@@ -116,7 +116,8 @@ if __name__ == "__main__":
         # Main loop handles displaying frames so GUI calls happen on main thread
         prev_bytes = {}
         prev_time = time.time()
-        rate_text = "0 KB/s"
+        last_data_rate_update_time = time.time()
+        data_rate_text = "0 KB/s"
         while any(t.is_alive() for t in threads) and not stop_event.is_set():
             # copy keys to avoid holding lock for long
             with lock:
@@ -129,16 +130,16 @@ if __name__ == "__main__":
                 
                 if show_stats:
                     now = time.time()
-                    if now - prev_time >= 1.0:
+                    if now - last_data_rate_update_time >= 1.0:
                         with lock:
                             total = stats.get(k, 0)
                         prev = prev_bytes.get(k, 0)
-                        rate_bps = (total - prev) / max(1e-6, now - prev_time)
+                        rate_bps = (total - prev) / max(1e-6, now - last_data_rate_update_time)
                         prev_bytes[k] = total
 
-                        rate_text = f"{rate_bps/1024:.1f} KB/s"
-                        prev_time = now
-                    cv2.putText(frame, rate_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                        data_rate_text = f"{rate_bps/1024:.1f} KB/s"
+                        last_data_rate_update_time = now
+                    cv2.putText(frame, data_rate_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.imshow(k, frame)
             if cv2.waitKey(30) & 0xFF == ord('q'):
                 stop_event.set()
