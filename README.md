@@ -3,6 +3,10 @@
 
 WRecorder contains scripts to broadcast and receive camera streams between computers. It was written to be easy to run on Raspberry Pi devices (camera source) and on desktop receivers.
 
+Important info:
+- Camera pi 1's IP is `192.168.1.49` and broadcasts starting from port `4444`
+- Camera pi 2's IP is `192.168.1.39` and broadcasts starting from port `5555`
+
 Contents:
 - Multi-stream (OpenCV, recommended): [`camera_streamer.py`](camera_streamer.py), [`camera_receiver.py`](camera_receiver.py), [`launch.sh`](launch.sh)
 - Single-stream (OpenCV, legacy): [`old/opencv_streamer.py`](old/opencv_streamer.py), [`old/opencv_receiver.py`](old/opencv_receiver.py), [`old/demo_ip_discovery_broadcaster.py`](old/demo_ip_discovery_broadcaster.py), [`old/demo_ip_discovery_receiver.py`](old/demo_ip_discovery_receiver.py)
