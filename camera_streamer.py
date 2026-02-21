@@ -22,7 +22,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
     footage_socket = context.socket(zmq.PUB)
     footage_socket.setsockopt(zmq.CONFLATE, 1)
     bind_addr = f'tcp://*:{config.port}'
-    print(f"[stream-{config.port}] Binding PUB socket to {bind_addr}")
+    print(f"\033[92m[stream-{config.port}] Binding PUB socket to {bind_addr}\033[0m")
     footage_socket.bind(bind_addr) # 172.20.10.3
 
     camera = cv2.VideoCapture(config.camera_id)  # init the camera
@@ -32,7 +32,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
     camera.set(cv2.CAP_PROP_FPS, config.target_fps)
     camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
-    print(f"[stream-{config.port}] Camera {config.camera_id} opened: {camera.isOpened()}")
+    print(f"\033[92m[stream-{config.port}] Camera {config.camera_id} opened: {camera.isOpened()}\033[0m")
     frame_count = 0
     frame_interval = 1.0 / config.target_fps
 
@@ -44,7 +44,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
             grabbed, frame = camera.read()  # grab the current frame
             frame_count += 1
             if not grabbed or frame is None:
-                print(f"[stream-{config.port}] frame {frame_count}: camera read failed (grabbed={grabbed})")
+                print(f"\033[91m[stream-{config.port}] frame {frame_count}: camera read failed (grabbed={grabbed})\033[0m")
                 time.sleep(min(10, 0.2 * 2**failed_frame_count))  # backoff on failures (0.2s, 0.4s, 0.8s, 1.6s, ..., max 10s)
                 failed_frame_count += 1
                 continue
@@ -52,7 +52,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
             # encode
             encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, config.jpg_quality])
             if not encoded:
-                print(f"[stream-{config.port}] frame {frame_count}: encoding failed")
+                print(f"\033[91m[stream-{config.port}] frame {frame_count}: encoding failed\033[0m")
                 time.sleep(min(10, 0.2 * 2**failed_frame_count))  # backoff on failures
                 failed_frame_count += 1
                 continue
@@ -63,7 +63,7 @@ def broadcast_camera_data(config: BroadcastConfig, stop_event: multiprocessing.E
             try:
                 footage_socket.send(jpg_as_text)
             except zmq.ZMQError as e:
-                print(f"[stream-{config.port}] ZMQ send error: {e}")
+                print(f"\033[91m[stream-{config.port}] ZMQ send error: {e}\033[0m")
                 break
 
             frame_end = time.time()
@@ -110,7 +110,7 @@ def start_multiple_streams(base_port: int, camera_ids: List[int], jpg_quality: i
         )
         p.start()
         processes.append(p)
-        print(f"Started camera {cam_id} on port {port}")
+        print(f"\033[93mAttempting to start camera {cam_id} on port {port}\033[0m")
 
         time.sleep(1)  # slight delay to stagger startups
 
@@ -146,7 +146,7 @@ if __name__ == "__main__":
         camera_ids = find_available_cameras()
 
     if not camera_ids:
-        print("No available cameras found. Exiting.")
+        print("\033[91mNo available cameras found. Exiting.\033[0m")
         exit(1)
 
     stop_event, processes = start_multiple_streams(base_port, camera_ids, jpg_quality, target_fps)

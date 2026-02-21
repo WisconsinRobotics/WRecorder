@@ -9,7 +9,7 @@ import signal
 from typing import List
 import time
 
-def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames: dict, lock: threading.Lock, stats: dict):
+def receive_camera_data(ip: str, port: int, timeout: int, stop_event: threading.Event, frames: dict, lock: threading.Lock, stats: dict):
     """Subscribe to a single publisher at ip:port and display frames until stop_event is set."""
     context = zmq.Context()
     footage_socket = context.socket(zmq.SUB)
@@ -20,8 +20,28 @@ def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames:
     footage_socket.setsockopt(zmq.RCVTIMEO, 500)
 
     window_name = f"Stream-{port}"
-    print(f"Receiving data on {ip}:{port} -> window '{window_name}'")
-    print("Press 'q' in any window to quit")
+    print(f"\033[93mAttempting to connect to {ip}:{port}...\033[0m")
+    
+    # Verify connection by waiting for first frame (10 second timeout)
+    connection_timeout = timeout
+    start_time = time.time()
+    first_frame_received = False
+    
+    while not stop_event.is_set() and not first_frame_received:
+        try:
+            footage_socket.recv(zmq.NOBLOCK)
+            first_frame_received = True
+            print(f"\033[92mConnected to {ip}:{port} -> window '{window_name}'\033[0m")
+            print("\033[92mPress 'q' in any window to quit\033[0m")
+        except zmq.Again:
+            if time.time() - start_time > connection_timeout:
+                print(f"\033[91mFailed to connect to {ip}:{port} (timeout after {connection_timeout}s)\033[0m")
+                return
+            time.sleep(0.1)
+            continue
+    
+    if not first_frame_received:
+        return
 
     try:
         while not stop_event.is_set():
@@ -72,7 +92,7 @@ def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames:
             pass
 
 
-def start_multiple_receivers(ip: str, ports: List[int]):
+def start_multiple_receivers(ip: str, ports: List[int], timeout: int):
     stop_event = threading.Event()
     threads: List[threading.Thread] = []
     frames: dict = {}
@@ -82,12 +102,11 @@ def start_multiple_receivers(ip: str, ports: List[int]):
     for port in ports:
         t = threading.Thread(
             target=receive_camera_data, 
-            args=(ip, port, stop_event, frames, lock, stats), 
+            args=(ip, port, timeout, stop_event, frames, lock, stats), 
             daemon=True
         )
         t.start()
         threads.append(t)
-        print(f"Started receiver for {ip}:{port}")
 
     return stop_event, threads, frames, lock, stats
 
@@ -97,13 +116,15 @@ if __name__ == "__main__":
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--count', type=int, default=1, help='Number of sequential ports to subscribe to starting at base-port')
     parser.add_argument('--show-stats', type=str, choices=['on', 'off'], default='off', help='Show streaming statistics')
+    parser.add_argument('--timeout', type=int, default=10, help='Seconds to wait for initial connection before giving up')
 
     args = parser.parse_args()
     broadcast_ip = args.broadcast_ip
     ports = [args.base_port + i for i in range(args.count)]
     show_stats = args.show_stats == 'on'
+    timeout = args.timeout
 
-    stop_event, threads, frames, lock, stats = start_multiple_receivers(broadcast_ip, ports)
+    stop_event, threads, frames, lock, stats = start_multiple_receivers(broadcast_ip, ports, timeout)
 
     def _signal_handler(signum, frame):
         print('Stopping receivers...')
