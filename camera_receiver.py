@@ -7,11 +7,13 @@ import argparse
 import threading
 import signal
 from typing import List
+import time
 
-def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames: dict, lock: threading.Lock):
+def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames: dict, lock: threading.Lock, stats: dict):
     """Subscribe to a single publisher at ip:port and display frames until stop_event is set."""
     context = zmq.Context()
     footage_socket = context.socket(zmq.SUB)
+    footage_socket.setsockopt(zmq.CONFLATE, 1)
     footage_socket.connect(f'tcp://{ip}:{port}')
     footage_socket.setsockopt_string(zmq.SUBSCRIBE, '')
     # set a receive timeout so we can check stop_event periodically
@@ -24,18 +26,18 @@ def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames:
     try:
         while not stop_event.is_set():
             try:
-                frame = footage_socket.recv()
+                frame_bytes = footage_socket.recv()
             except zmq.Again:
                 continue
 
-            # frame may be bytes or str depending on sender
-            if isinstance(frame, bytes):
-                b64bytes = frame
-            else:
-                b64bytes = str(frame).encode('utf-8')
+            try:
+                with lock:
+                    stats[window_name] = stats.get(window_name, 0) + len(frame_bytes)
+            except Exception:
+                pass
 
             try:
-                img = base64.b64decode(b64bytes)
+                img = base64.b64decode(frame_bytes)
                 npimg = np.frombuffer(img, dtype=np.uint8)
                 source = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
                 if source is None:
@@ -56,6 +58,8 @@ def receive_camera_data(ip: str, port: int, stop_event: threading.Event, frames:
             with lock:
                 if window_name in frames:
                     del frames[window_name]
+                if window_name in stats:
+                    del stats[window_name]
         except Exception:
             pass
         try:
@@ -73,26 +77,33 @@ def start_multiple_receivers(ip: str, ports: List[int]):
     threads: List[threading.Thread] = []
     frames: dict = {}
     lock = threading.Lock()
+    stats = {}
 
     for port in ports:
-        t = threading.Thread(target=receive_camera_data, args=(ip, port, stop_event, frames, lock), daemon=True)
+        t = threading.Thread(
+            target=receive_camera_data, 
+            args=(ip, port, stop_event, frames, lock, stats), 
+            daemon=True
+        )
         t.start()
         threads.append(t)
         print(f"Started receiver for {ip}:{port}")
 
-    return stop_event, threads, frames, lock
+    return stop_event, threads, frames, lock, stats
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='camera_receiver', description='Receive one or more camera streams over ZMQ')
     parser.add_argument('--broadcast-ip', type=str, default="0.0.0.0", help='IP of the publisher(s)')
     parser.add_argument('--base-port', type=int, default=5555, help='Starting port for the first camera. Subsequent cameras use base-port+index')
     parser.add_argument('--count', type=int, default=1, help='Number of sequential ports to subscribe to starting at base-port')
+    parser.add_argument('--show-stats', type=str, choices=['on', 'off'], default='off', help='Show streaming statistics')
 
     args = parser.parse_args()
     broadcast_ip = args.broadcast_ip
     ports = [args.base_port + i for i in range(args.count)]
+    show_stats = args.show_stats == 'on'
 
-    stop_event, threads, frames, lock = start_multiple_receivers(broadcast_ip, ports)
+    stop_event, threads, frames, lock, stats = start_multiple_receivers(broadcast_ip, ports)
 
     def _signal_handler(signum, frame):
         print('Stopping receivers...')
@@ -103,6 +114,10 @@ if __name__ == "__main__":
 
     try:
         # Main loop handles displaying frames so GUI calls happen on main thread
+        prev_bytes = {}
+        prev_time = time.time()
+        last_data_rate_update_time = time.time()
+        data_rate_text = "0 KB/s"
         while any(t.is_alive() for t in threads) and not stop_event.is_set():
             # copy keys to avoid holding lock for long
             with lock:
@@ -112,6 +127,19 @@ if __name__ == "__main__":
                     frame = frames.get(k)
                 if frame is None:
                     continue
+                
+                if show_stats:
+                    now = time.time()
+                    if now - last_data_rate_update_time >= 1.0:
+                        with lock:
+                            total = stats.get(k, 0)
+                        prev = prev_bytes.get(k, 0)
+                        rate_bps = (total - prev) / max(1e-6, now - last_data_rate_update_time)
+                        prev_bytes[k] = total
+
+                        data_rate_text = f"{rate_bps/1024:.1f} KB/s"
+                        last_data_rate_update_time = now
+                    cv2.putText(frame, data_rate_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.imshow(k, frame)
             if cv2.waitKey(30) & 0xFF == ord('q'):
                 stop_event.set()
