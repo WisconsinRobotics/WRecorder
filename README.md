@@ -64,7 +64,7 @@ This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) 
 ```
 python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30 --target-fps 30
 ```
-This command will launch 3 streams on ports 5555, 5556, and 5557 from the cameras with IDs 0, 2, and 4 with JPG quality set to 30.
+This command will launch 3 streams on ports 5555, 5556, and 5557 from the cameras with IDs 0, 2, and 4 with JPG quality set to 30 and target FPS set to 30.
 
 ## Launch receiver command
 **Parameters**
@@ -77,11 +77,13 @@ This command will launch 3 streams on ports 5555, 5556, and 5557 from the camera
 
 *show-stats*: Toggle if streaming statistics are shown -- `default: off`
 
+*timeout*: Seconds to wait for initial connection before giving up -- `default: 10`
+
 **Example Command**
 ```
-python3 camera_receiver.py --broadcast-ip 192.168.1.227 --base-port 5555 --count 3 --show-stats=on
+python3 camera_receiver.py --broadcast-ip 192.168.1.227 --base-port 5555 --count 3 --show-stats=on --timeout=15
 ```
-This command will receive 3 streams on ports 5555, 5556, and 5557 from the broadcasting computer with IP 192.168.1.227.
+This command will receive 3 streams on ports 5555, 5556, and 5557 from the broadcasting computer with IP 192.168.1.227. These streams will have their stats displayed and the receiver will wait up to 15 seconds for the initial connection before exiting.
 
 # Single Stream OpenCV Method (Old)
 This method uses OpenCV to capture and display video frames, and ZeroMQ (pyzmq) to transmit the frames over the network. It can only handle a single camera stream at a time.
