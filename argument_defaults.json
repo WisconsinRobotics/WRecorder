@@ -1,0 +1,25 @@
+{
+  "both": {
+    "base_port": 5555,
+    "discovery_port": 5550
+  },
+  "streamer-only": {
+    "camera_ids": [0],
+    "auto_find_cameras": "on",
+    "jpg_quality": 20,
+    "target_fps": 30,
+    "simulate_cameras": null,
+    "streamer_name": "wrecorder-streamer",
+    "announce_discovery": "on",
+    "discovery_interval": 1.0
+  },
+  "receiver-only": {
+    "broadcast_ip": "0.0.0.0",
+    "count": 1,
+    "show_stats": "off",
+    "timeout": 10.0,
+    "auto_config": "on",
+    "streamer_name_filter": null,
+    "discovery_timeout": null
+  }
+}
