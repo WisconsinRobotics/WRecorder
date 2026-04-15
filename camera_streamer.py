@@ -44,15 +44,50 @@ class BroadcastConfig:
 
 
 def resolve_local_ip() -> str:
-    """Best-effort local IPv4 address for discovery announcements."""
-    probe_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """Best-effort local IPv4 address for discovery announcements.
+
+    This avoids relying on internet access. It first checks an explicit override,
+    then uses local-network route probing, and finally falls back to hostname
+    address resolution.
+    """
+
+    override_ip = os.environ.get("WRECORDER_STREAMER_IP", "").strip()
+    if override_ip:
+        try:
+            socket.inet_aton(override_ip)
+            if not override_ip.startswith("127."):
+                return override_ip
+        except OSError:
+            pass
+
+    # Try route-based interface selection without requiring internet connectivity.
+    probe_targets = [
+        ("10.255.255.255", 1),
+        ("192.168.255.255", 1),
+        ("172.31.255.255", 1),
+    ]
+    for host, port in probe_targets:
+        probe_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe_socket.connect((host, port))
+            candidate_ip = probe_socket.getsockname()[0]
+            if candidate_ip and not candidate_ip.startswith("127."):
+                return candidate_ip
+        except OSError:
+            pass
+        finally:
+            probe_socket.close()
+
+    # Hostname resolution fallback (works on many offline/local-only deployments).
     try:
-        probe_socket.connect(("8.8.8.8", 80))
-        return probe_socket.getsockname()[0]
+        host_candidates = socket.gethostbyname_ex(socket.gethostname())[2]
+        for candidate_ip in host_candidates:
+            if candidate_ip and not candidate_ip.startswith("127."):
+                return candidate_ip
     except OSError:
-        return "127.0.0.1"
-    finally:
-        probe_socket.close()
+        pass
+
+    return "127.0.0.1"
 
 
 def announce_stream_config(
