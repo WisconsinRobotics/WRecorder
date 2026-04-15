@@ -75,13 +75,6 @@ Example:
 python3 old/gstreamer_receiver.py -port=5000
 ```
 
-## Legacy Raspberry Pi network commands
-
-```sh
-nmcli dev wifi
-nmtui
-```
-
 ## Legacy troubleshooting notes
 
 - No camera detected: verify device node (for example `/dev/video0`) and permissions.
