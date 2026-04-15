@@ -227,7 +227,7 @@ if __name__ == "__main__":
 
     if auto_config:
         if discovery_timeout is None:
-            discovery_budget = 5.0
+            discovery_budget = min(5.0, timeout * 0.5)
         else:
             discovery_budget = discovery_timeout
         discovery_budget = max(0.1, min(discovery_budget, timeout))
