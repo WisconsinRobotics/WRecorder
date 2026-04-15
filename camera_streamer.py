@@ -121,7 +121,11 @@ def announce_stream_config(
         f"\033[92m[discovery] Announcing '{streamer_name}' on UDP {discovery_port} "
         f"(base_port={base_port}, streams={len(camera_ids)})\033[0m"
     )
-
+    print(
+        f"\033[92m[discovery] payload: streamer_ip={streamer_ip}, camera_ids={camera_ids}, "
+        f"interval={interval:.2f}s, version={DISCOVERY_VERSION}\033[0m"
+    )
+    
     try:
         while not stop_event.is_set():
             payload["announced_at"] = time.time()
@@ -129,7 +133,10 @@ def announce_stream_config(
             try:
                 announce_socket.sendto(packet, ("255.255.255.255", discovery_port))
             except OSError as exc:
-                print(f"\033[91m[discovery] announce failed: {exc}\033[0m")
+                print(
+                    f"\033[91m[discovery] announce failed: {exc} "
+                    f"(target=255.255.255.255:{discovery_port}, streamer_ip={streamer_ip})\033[0m"
+                )
             stop_event.wait(interval)
     finally:
         announce_socket.close()
