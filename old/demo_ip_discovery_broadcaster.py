@@ -9,6 +9,9 @@ broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 connection_countdown = 10  # seconds
 while connection_countdown > 0:
-    broadcast_socket.sendto(f'IP_BROADCASTER:tcp://{BROADCAST_IP}:5555'.encode('utf8'), (BROADCAST_IP, DISCOVERY_PORT))
-    time.sleep(1)
-    connection_countdown -= 1
+	broadcast_socket.sendto(
+		f"IP_BROADCASTER:tcp://{BROADCAST_IP}:5555".encode("utf8"),
+		(BROADCAST_IP, DISCOVERY_PORT),
+	)
+	time.sleep(1)
+	connection_countdown -= 1

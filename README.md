@@ -72,7 +72,6 @@ Current CLI flags for [camera_receiver.py](camera_receiver.py):
 - `--broadcast-ip`: Publisher IP address. Current default from [argument_defaults.json](argument_defaults.json): `0.0.0.0`.
 - `--base-port`: Starting port for first subscribed stream; additional streams use `base-port + index`. Current default from [argument_defaults.json](argument_defaults.json): `5555`.
 - `--count`: Number of sequential ports to subscribe to, starting at `base-port`. Current default from [argument_defaults.json](argument_defaults.json): `1`.
-- `--show-stats`: `on|off`; show per-stream stats overlay. Current default from [argument_defaults.json](argument_defaults.json): `off`.
 - `--timeout`: Total setup timeout in seconds (discovery + initial connection). Current default from [argument_defaults.json](argument_defaults.json): `10.0`.
 - `--auto-config`: `on|off`; auto-configure from discovery announcements. Current default from [argument_defaults.json](argument_defaults.json): `on`.
 - `--streamer-name-filter`: Accept only matching streamer name from discovery. Current default from [argument_defaults.json](argument_defaults.json): `null` (no filter).
@@ -97,7 +96,7 @@ python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30 
 Discovery receiver with filter:
 
 ```sh
-python3 camera_receiver.py --auto-config on --streamer-name-filter cam-pi-1 --show-stats on
+python3 camera_receiver.py --auto-config on --streamer-name-filter cam-pi-1
 ```
 
 Simulated cameras:
@@ -114,5 +113,4 @@ python3 camera_streamer.py --simulate-cameras 4
 
 ## Notes
 
-- Stream stats overlay is available with `--show-stats on`.
 - If a camera is physically disconnected, a streamer restart may still be required depending on device/driver behavior.

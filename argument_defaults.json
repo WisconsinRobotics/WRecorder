@@ -16,7 +16,6 @@
   "receiver-only": {
     "broadcast_ip": "0.0.0.0",
     "count": 1,
-    "show_stats": "off",
     "timeout": 10.0,
     "auto_config": "on",
     "streamer_name_filter": null,
