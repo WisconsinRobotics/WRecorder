@@ -7,3 +7,5 @@ __pycache__
 
 ruff.toml
 .ruff_cache
+
+temp.py

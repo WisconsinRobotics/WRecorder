@@ -4,6 +4,7 @@ import os
 import signal
 from typing import Any, Callable, Dict, Iterable, List, Optional
 import time
+import logging
 
 
 DEFAULTS_FILE_NAME = "argument_defaults.json"
@@ -13,25 +14,45 @@ DISCOVERY_TEXT_ENCODING = "utf8"
 VALID_PORT_MIN = 1
 VALID_PORT_MAX = 65535
 
-ANSI_RESET = "\033[0m"
-ANSI_RED = "\033[91m"
-ANSI_GREEN = "\033[92m"
-ANSI_YELLOW = "\033[93m"
+
+class LoggingFormatter(logging.Formatter):
+	ANSI_RESET = "\033[0m"
+	ANSI_RED = "\033[91m"
+	ANSI_GREEN = "\033[92m"
+	ANSI_YELLOW = "\033[93m"
+	ANSI_BOLD = "\033[1m"
+
+	FORMATS = {
+		logging.DEBUG: ANSI_YELLOW,
+		logging.INFO: ANSI_GREEN,
+		logging.WARNING: ANSI_YELLOW,
+		logging.ERROR: ANSI_RED,
+		logging.CRITICAL: ANSI_RED + ANSI_BOLD,
+	}
+	formatter = logging.Formatter(
+		"%(relativeCreated)dms %(levelname)s [%(name)s]: %(message)s"
+	)
+
+	def format(self, record: logging.LogRecord) -> str:
+		log_color = self.FORMATS.get(record.levelno, "")
+		message = self.formatter.format(record)
+		return f"{log_color}{message}{self.ANSI_RESET}"
 
 
-def color_text(message: str, color: str) -> str:
-	return f"{color}{message}{ANSI_RESET}"
+loggers = {}
 
 
-def rate_limited_warn(counter: int, message: str, sleep: bool = False, max_sleep_seconds: float = 5.0, backoff_base_seconds: float = 0.1):
-	print(color_text(f"{message} (count={counter})", ANSI_RED))
-	if sleep:
-		time.sleep(
-			min(
-				max_sleep_seconds,
-				backoff_base_seconds * 2**counter,
-			)
-		)
+def get_logger(name: str) -> logging.Logger:
+	if name in loggers:
+		return loggers[name]
+	logger = logging.getLogger(name)
+	logger.setLevel(logging.DEBUG)
+	if not logger.hasHandlers():
+		handler = logging.StreamHandler()
+		handler.setFormatter(LoggingFormatter())
+		logger.addHandler(handler)
+	loggers[name] = logger
+	return logger
 
 
 def is_valid_port(port: Any) -> bool:
@@ -106,13 +127,13 @@ def parse_discovery_payload(
 	}
 
 
-def install_stop_signal_handlers(stop_callback: Callable[[], None], message: str):
+def install_stop_signal_handlers(stop_callback: Callable[[], None], logger: logging.Logger, message: str):
 	"""Install SIGINT/SIGTERM handlers that print a message and request shutdown."""
 
 	def _signal_handler(signum, frame):
 		_ = signum
 		_ = frame
-		print(message)
+		logger.info(message)
 		stop_callback()
 
 	signal.signal(signal.SIGINT, _signal_handler)
@@ -170,11 +191,8 @@ def apply_required_external_defaults(
 		raise RuntimeError(f"missing defaults keys for {section_name}: {missing_keys}")
 
 	parser.set_defaults(**merged)
-	print(
-		color_text(
-			f"[defaults] loaded {len(merged)} defaults from {defaults_file_name}",
-			ANSI_GREEN,
-		)
+	get_logger(__name__).info(
+		f"loaded {len(merged)} defaults for section '{section_name}' from {defaults_file_name}"
 	)
 
 
@@ -192,3 +210,6 @@ def int_in_range(name: str, minimum: int, maximum: int = None):
 		return parsed
 
 	return _validator
+
+def clamp[T](value: T, minimum: T, maximum: T) -> T: # generics in python lmao
+	return max(minimum, min(maximum, value))

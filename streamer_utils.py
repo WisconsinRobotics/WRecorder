@@ -2,14 +2,28 @@ import ipaddress
 import cv2
 import numpy as np
 import time
-from common_utils import color_text, ANSI_GREEN, ANSI_RED, int_in_range, apply_required_external_defaults, VALID_PORT_MIN, VALID_PORT_MAX
+from common_utils import (
+	int_in_range,
+	apply_required_external_defaults,
+	VALID_PORT_MIN,
+	VALID_PORT_MAX,
+	get_logger,
+	clamp,
+)
 import zmq
 import argparse
 import subprocess
+import multiprocessing
+from typing import List
 
+logger = get_logger(__name__)
 
 CAMERA_FRAME_WIDTH = 640
 CAMERA_FRAME_HEIGHT = 640
+
+CAMERA_BACKOFF_BASE_SECONDS = 0.2
+CAMERA_MAX_BACKOFF_SECONDS = 10
+STARTUP_STAGGER_SECONDS = 1
 
 
 def resolve_local_ip() -> str:
@@ -22,12 +36,12 @@ def resolve_local_ip() -> str:
 				if not ip.is_loopback:
 					return ip_str
 		except Exception as e:
-			print(color_text(f"Error parsing local IP addresses: {e}", ANSI_RED))
-			
+			logger.error(f"Error parsing local IP addresses: {e}")
+
 	return "127.0.0.1"
 
 
-class BroadcastConfig:
+class StreamerConfig:
 	def __init__(
 		self,
 		port: int,
@@ -43,8 +57,8 @@ class BroadcastConfig:
 		self.simulation = simulation
 
 
-class Camera:
-	def __init__(self, config: BroadcastConfig):
+class CameraHandler:
+	def __init__(self, config: StreamerConfig):
 		self.config = config
 		self.camera = None
 
@@ -52,11 +66,8 @@ class Camera:
 		if not self.config.simulation:
 			self._configure_real_camera()
 		else:
-			print(
-				color_text(
-					f"[stream-{self.config.port}] Simulated camera {self.config.camera_id} initialized",
-					ANSI_GREEN,
-				)
+			logger.info(
+				f"[stream-{self.config.port}] Simulated camera {self.config.camera_id} initialized"
 			)
 
 	def _configure_real_camera(self):
@@ -67,11 +78,8 @@ class Camera:
 		self.camera.set(cv2.CAP_PROP_FPS, self.config.target_fps)
 		self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-		print(
-			color_text(
-				f"[stream-{self.config.port}] Camera {self.config.camera_id} opened: {self.camera.isOpened()}",
-				ANSI_GREEN,
-			)
+		logger.info(
+			f"[stream-{self.config.port}] Camera {self.config.camera_id} opened: {self.camera.isOpened()}"
 		)
 
 	def read_frame(self) -> tuple[bool, np.ndarray]:
@@ -79,7 +87,7 @@ class Camera:
 			return True, self._generate_simulated_frame(camera_id=self.config.camera_id)
 		else:
 			return self._read_real_frame()
-	
+
 	def get_encoded_frame(self) -> tuple[bool, bytes]:
 		grabbed, frame = self.read_frame()
 		if not grabbed or frame is None:
@@ -145,19 +153,16 @@ class Camera:
 		if self.camera is not None:
 			self.camera.release()
 
+
 class ZMQHandler:
-	def __init__(self, config: BroadcastConfig):
+	def __init__(self, config: StreamerConfig):
 		self.config = config
 		self.context = zmq.Context()
 		self.footage_socket = self.context.socket(zmq.PUB)
 		self.footage_socket.setsockopt(zmq.CONFLATE, 1)
 		self.footage_socket.setsockopt(zmq.LINGER, 0)
 		bind_addr = f"tcp://*:{config.port}"
-		print(
-			color_text(
-				f"[stream-{config.port}] Binding PUB socket to {bind_addr}", ANSI_GREEN
-			)
-		)
+		logger.info(f"[stream-{config.port}] Binding PUB socket to {bind_addr}")
 		self.footage_socket.bind(bind_addr)
 
 	def send_frame(self, encoded_frame: bytes) -> bool:
@@ -165,20 +170,19 @@ class ZMQHandler:
 			self.footage_socket.send(encoded_frame)
 			return True
 		except zmq.ZMQError as e:
-			print(
-				color_text(f"[stream-{self.config.port}] ZMQ send error: {e}", ANSI_RED)
-			)
+			logger.error(f"[stream-{self.config.port}] ZMQ send error: {e}")
 			return False
-	
+
 	def close(self):
 		try:
 			self.footage_socket.close()
 		except Exception as e:
-			print(f"[stream-{self.config.port}] error closing socket: {e}")
+			logger.error(f"[stream-{self.config.port}] error closing socket: {e}")
 		try:
 			self.context.term()
 		except Exception as e:
-			print(f"[stream-{self.config.port}] error terminating context: {e}")
+			logger.error(f"[stream-{self.config.port}] error terminating context: {e}")
+
 
 def handle_arguments():
 	parser = argparse.ArgumentParser(
@@ -242,7 +246,99 @@ def handle_arguments():
 	try:
 		apply_required_external_defaults(parser, "streamer-only")
 	except RuntimeError as exc:
-		print(color_text(f"[defaults] {exc}", ANSI_RED))
+		logger.error(f"[defaults] {exc}")
 		exit(2)
 
 	return parser.parse_args()
+
+
+class SingleStreamer:
+	def __init__(self, config: StreamerConfig):
+		self.config = config
+
+	def start(self, stop_event: multiprocessing.Event):
+		camera_handler = CameraHandler(self.config)
+		zmq_handler = ZMQHandler(self.config)
+
+		frame_count = 0
+		frame_interval = 1.0 / self.config.target_fps
+
+		try:
+			failed_frame_count = 0
+			while not stop_event.is_set():
+				frame_start = time.time()
+
+				success, encoded_frame = camera_handler.get_encoded_frame()
+				if not success or encoded_frame is None:
+					logger.error(
+						f"[stream-{self.config.port}] failed to get encoded frame (failure #{failed_frame_count + 1})"
+					)
+					# sleep 2^CAMERA_BACKOFF_BASE_SECONDS up to CAMERA_MAX_BACKOFF_SECONDS between failures to avoid tight failure loops
+					time.sleep(
+						clamp(
+							CAMERA_BACKOFF_BASE_SECONDS * (2**failed_frame_count),
+							0,
+							CAMERA_MAX_BACKOFF_SECONDS,
+						)
+					)
+					failed_frame_count += 1
+					continue
+				failed_frame_count = 0  # reset on success
+
+				success = zmq_handler.send_frame(encoded_frame)
+				if not success:
+					logger.error(f"[stream-{self.config.port}] failed to send frame")
+					continue
+				frame_count += 1
+
+				frame_end = time.time()
+				elapsed = frame_end - frame_start
+				sleep_time = frame_interval - elapsed
+				if sleep_time > 0:
+					time.sleep(sleep_time)
+
+		finally:
+			logger.info(
+				f"[stream-{self.config.port}] cleaning up camera and socket (frames sent: {frame_count})"
+			)
+
+			camera_handler.release()
+			zmq_handler.close()
+
+
+class MultiStreamer:
+	def __init__(
+		self,
+		base_port: int,
+		camera_ids: List[int],
+		jpg_quality: int,
+		target_fps: int,
+		simulation: bool = False,
+	):
+		self.streamers = [
+			SingleStreamer(
+				StreamerConfig(
+					port=base_port + idx,
+					camera_id=cam_id,
+					jpg_quality=jpg_quality,
+					target_fps=target_fps,
+					simulation=simulation,
+				)
+			)
+			for idx, cam_id in enumerate(camera_ids)
+		]
+
+		self.stop_event = multiprocessing.Event()
+		self.processes: List[multiprocessing.Process] = []
+
+	def start(self):
+		for sub_streamer in self.streamers:
+			p = multiprocessing.Process(target=sub_streamer.start, args=(self.stop_event,), daemon=True)
+			p.start()
+			self.processes.append(p)
+
+			logger.info(
+				f"Attempting to start camera {sub_streamer.config.camera_id} on port {sub_streamer.config.port}"
+			)
+
+			time.sleep(STARTUP_STAGGER_SECONDS)  # stagger camera startups to reduce contention

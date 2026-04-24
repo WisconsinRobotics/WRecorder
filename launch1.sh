@@ -12,7 +12,7 @@ WAIT_SECONDS="${NETWORK_WAIT_SECONDS:-30}"
 READY_IP=""
 
 while [ "$WAIT_SECONDS" -gt 0 ]; do
-    READY_IP="$(hostname -I 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i !~ /^127\./) {print $i; exit}}')"
+    READY_IP="$(ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1)"
     if [ -n "$READY_IP" ]; then
         break
     fi
@@ -20,7 +20,7 @@ while [ "$WAIT_SECONDS" -gt 0 ]; do
     WAIT_SECONDS=$((WAIT_SECONDS - 1))
 done
 
-# Allow explicit pinning; otherwise use the first non-loopback IP discovered at boot.
+# Allow explicit pinning; otherwise use eth0 IPv4 when available.
 if [ -n "${WRECORDER_STREAMER_IP:-}" ]; then
     export WRECORDER_STREAMER_IP
 elif [ -n "$READY_IP" ]; then
