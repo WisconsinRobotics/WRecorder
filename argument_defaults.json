@@ -11,7 +11,8 @@
     "simulate_cameras": null,
     "streamer_name": "wrecorder-streamer",
     "announce_discovery": "on",
-    "discovery_interval": 1.0
+    "discovery_interval": 1.0,
+    "grayscale": "off"
   },
   "receiver-only": {
     "broadcast_ip": "0.0.0.0",

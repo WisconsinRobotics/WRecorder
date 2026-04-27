@@ -107,6 +107,7 @@ if __name__ == "__main__":
 	announce_discovery = args.announce_discovery.lower() == "on"
 	discovery_port = args.discovery_port
 	discovery_interval = args.discovery_interval
+	grayscale = args.grayscale.lower() == "on"
 
 	if simulate_cameras is not None:
 		camera_ids = list(range(simulate_cameras))
@@ -129,7 +130,7 @@ if __name__ == "__main__":
 		)
 		exit(2)
 
-	streamer = MultiStreamer(base_port, camera_ids, jpg_quality, target_fps, simulation=simulate_cameras is not None)
+	streamer = MultiStreamer(base_port, camera_ids, jpg_quality, target_fps, simulation=simulate_cameras is not None, grayscale=grayscale)
 	streamer.start()
 
 	discovery_thread = None

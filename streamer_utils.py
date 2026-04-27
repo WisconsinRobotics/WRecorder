@@ -49,12 +49,14 @@ class StreamerConfig:
 		jpg_quality: int,
 		target_fps: int,
 		simulation: bool = False,
+		grayscale: bool = False,
 	):
 		self.port = port
 		self.camera_id = camera_id
 		self.jpg_quality = jpg_quality
 		self.target_fps = target_fps
 		self.simulation = simulation
+		self.grayscale = grayscale
 
 
 class CameraHandler:
@@ -92,6 +94,8 @@ class CameraHandler:
 		grabbed, frame = self.read_frame()
 		if not grabbed or frame is None:
 			return False, b""
+		if self.config.grayscale:
+			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		encoded, buffer = cv2.imencode(
 			".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpg_quality]
 		)
@@ -242,6 +246,12 @@ def handle_arguments():
 		type=float,
 		help="Seconds between discovery announcements",
 	)
+	parser.add_argument(
+		"--grayscale",
+		type=str,
+		choices=["on", "off"],
+		help="Convert frames to grayscale to reduce bandwidth",
+	)
 
 	try:
 		apply_required_external_defaults(parser, "streamer-only")
@@ -314,6 +324,7 @@ class MultiStreamer:
 		jpg_quality: int,
 		target_fps: int,
 		simulation: bool = False,
+		grayscale: bool = False,
 	):
 		self.streamers = [
 			SingleStreamer(
@@ -323,6 +334,7 @@ class MultiStreamer:
 					jpg_quality=jpg_quality,
 					target_fps=target_fps,
 					simulation=simulation,
+					grayscale=grayscale,
 				)
 			)
 			for idx, cam_id in enumerate(camera_ids)
