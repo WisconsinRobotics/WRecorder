@@ -1,7 +1,4 @@
-import cv2
-import socket
-from typing import Optional
-import time
+import os
 from common_utils import (
 	get_logger,
 	build_sequential_ports,
@@ -9,13 +6,14 @@ from common_utils import (
 	parse_discovery_payload,
 	clamp,
 )
-from receiver_utils import handle_arguments, MultiReceiver
-import os
 
-os.environ["QT_QPA_FONTDIR"] = "./fonts"
+import cv2
+import socket
+from typing import Optional
+import time
+from receiver_utils import handle_arguments, MultiReceiver
 
 logger = get_logger(__name__)
-
 
 DISCOVERY_SOCKET_TIMEOUT_SECONDS = 0.25
 DISCOVERY_BUFFER_SIZE_BYTES = 4096
@@ -23,7 +21,9 @@ MIN_TIMEOUT_SECONDS = 1.0
 DISCOVERY_TIMEOUT_SECONDS = 5.0
 WARN_EVERY_N_FAILURES = 50
 DISPLAY_WAIT_KEY_MS = 30
+QT_FONTS_DIR = "./fonts"
 
+os.environ["QT_QPA_FONTDIR"] = QT_FONTS_DIR
 
 def discover_stream_config(
 	discovery_port: int, timeout: float, streamer_name_filter: str = None
@@ -53,7 +53,7 @@ def discover_stream_config(
 
 			logger.info(
 				f"Discovered '{discovered['streamer_name']}' at {discovered['streamer_ip']} "
-				f"(base_port={discovered['base_port']}, streams={discovered['stream_count']})"
+				f"(multicast={discovered.get('multicast_ip', 'unknown')}, base_port={discovered['base_port']}, streams={discovered['stream_count']})"
 			)
 			return discovered
 	finally:
@@ -65,7 +65,7 @@ def discover_stream_config(
 if __name__ == "__main__":
 	args = handle_arguments()
 
-	broadcast_ip = args.broadcast_ip
+	multicast_ip = args.multicast_ip
 	base_port = args.base_port
 	stream_count = args.count
 	timeout = args.timeout
@@ -87,7 +87,7 @@ if __name__ == "__main__":
 		)
 
 		if discovered is not None:
-			broadcast_ip = discovered["streamer_ip"]
+			multicast_ip = discovered.get("multicast_ip", discovered["streamer_ip"])
 			base_port = discovered["base_port"]
 			stream_count = discovered["stream_count"]
 			window_prefix = discovered["streamer_name"]
@@ -104,11 +104,11 @@ if __name__ == "__main__":
 		exit(2)
 
 	logger.info(
-		f"Receiver config: ip={broadcast_ip}, base_port={base_port}, "
+		f"Receiver config: multicast_ip={multicast_ip}, base_port={base_port}, "
 		f"count={stream_count}, timeout={connection_timeout:.1f}s"
 	)
 
-	receiver = MultiReceiver(broadcast_ip, ports, connection_timeout, window_prefix)
+	receiver = MultiReceiver(multicast_ip, ports, connection_timeout, window_prefix)
 	receiver.start()
 
 	install_stop_signal_handlers(receiver.stop_event.set, logger, "Stopping receivers...")

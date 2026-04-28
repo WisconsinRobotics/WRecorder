@@ -10,7 +10,6 @@ from common_utils import (
 	get_logger,
 	clamp,
 )
-import zmq
 import argparse
 import subprocess
 import multiprocessing
@@ -40,23 +39,34 @@ def resolve_local_ip() -> str:
 
 	return "127.0.0.1"
 
+def _is_gstreamer_element_available(element_name: str) -> bool:
+	try:
+		result = subprocess.run(["gst-inspect-1.0", element_name], capture_output=True)
+		return result.returncode == 0
+	except FileNotFoundError:
+		return False
+
 
 class StreamerConfig:
 	def __init__(
 		self,
 		port: int,
 		camera_id: int,
-		jpg_quality: int,
+		bitrate: int,
 		target_fps: int,
+		multicast_ip: str,
 		simulation: bool = False,
 		grayscale: bool = False,
 	):
 		self.port = port
 		self.camera_id = camera_id
-		self.jpg_quality = jpg_quality
+		self.bitrate = bitrate
 		self.target_fps = target_fps
+		self.multicast_ip = multicast_ip
 		self.simulation = simulation
 		self.grayscale = grayscale
+		self.frame_width = CAMERA_FRAME_WIDTH
+		self.frame_height = CAMERA_FRAME_HEIGHT
 
 
 class CameraHandler:
@@ -73,35 +83,31 @@ class CameraHandler:
 			)
 
 	def _configure_real_camera(self):
-		self.camera = cv2.VideoCapture(self.config.camera_id)  # init the camera
+		self.camera = cv2.VideoCapture(self.config.camera_id, cv2.CAP_V4L2)  # init the camera explicitly with V4L2
 		self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
 		self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
 		self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 		self.camera.set(cv2.CAP_PROP_FPS, self.config.target_fps)
 		self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+		
+		# Allow the camera hardware to override the requested resolution
+		self.config.frame_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH) or CAMERA_FRAME_WIDTH)
+		self.config.frame_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT) or CAMERA_FRAME_HEIGHT)
 
 		logger.info(
-			f"[stream-{self.config.port}] Camera {self.config.camera_id} opened: {self.camera.isOpened()}"
+			f"[stream-{self.config.port}] Camera {self.config.camera_id} opened: {self.camera.isOpened()} at {self.config.frame_width}x{self.config.frame_height}"
 		)
 
 	def read_frame(self) -> tuple[bool, np.ndarray]:
 		if self.config.simulation:
 			return True, self._generate_simulated_frame(camera_id=self.config.camera_id)
 		else:
-			return self._read_real_frame()
-
-	def get_encoded_frame(self) -> tuple[bool, bytes]:
-		grabbed, frame = self.read_frame()
-		if not grabbed or frame is None:
-			return False, b""
-		if self.config.grayscale:
-			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-		encoded, buffer = cv2.imencode(
-			".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpg_quality]
-		)
-		if not encoded:
-			return False, b""
-		return True, buffer.tobytes()
+			grabbed, frame = self._read_real_frame()
+			if grabbed and frame is not None and self.config.grayscale:
+				# Convert to grayscale, then back to BGR for 3-channel encoding compatibility
+				frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+				frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+			return grabbed, frame
 
 	def _generate_simulated_frame(
 		self, camera_id: int, width: int = 640, height: int = 640
@@ -158,40 +164,65 @@ class CameraHandler:
 			self.camera.release()
 
 
-class ZMQHandler:
+class GStreamerHandler:
 	def __init__(self, config: StreamerConfig):
 		self.config = config
-		self.context = zmq.Context()
-		self.footage_socket = self.context.socket(zmq.PUB)
-		self.footage_socket.setsockopt(zmq.CONFLATE, 1)
-		self.footage_socket.setsockopt(zmq.LINGER, 0)
-		bind_addr = f"tcp://*:{config.port}"
-		logger.info(f"[stream-{config.port}] Binding PUB socket to {bind_addr}")
-		self.footage_socket.bind(bind_addr)
+		
+		if _is_gstreamer_element_available("v4l2h264enc"):
+			logger.info(f"[stream-{config.port}] Using hardware encoder v4l2h264enc")
+			# v4l2h264enc hardware encoding pipeline for Raspberry Pi 4
+			pipeline = (
+				f"appsrc ! videoconvert ! video/x-raw,format=I420 ! "
+				f"v4l2h264enc extra-controls=\"encode,video_bitrate={self.config.bitrate},video_gop_size={int(self.config.target_fps)}\" ! "
+				f"h264parse ! "
+				f"rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.port} auto-multicast=true sync=false"
+			)
+		else:
+			logger.info(f"[stream-{config.port}] v4l2h264enc not found, falling back to software x264enc")
+			# x264enc uses kilobits per second for its bitrate property
+			kbps = max(1, self.config.bitrate // 1000)
+			pipeline = (
+				f"appsrc ! videoconvert ! video/x-raw,format=I420 ! "
+				f"x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(self.config.target_fps)} ! "
+				f"h264parse ! "
+				f"rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.port} auto-multicast=true sync=false"
+			)
+		
+		logger.info(f"[stream-{config.port}] Initializing VideoWriter targeting {self.config.multicast_ip}:{config.port}")
+		logger.info(f"[stream-{config.port}] Pipeline: {pipeline}")
+		
+		self.writer = cv2.VideoWriter(
+			pipeline,
+			cv2.CAP_GSTREAMER,
+			0,  # fourcc is strictly 0 when using gstreamer backend
+			float(self.config.target_fps),
+			(self.config.frame_width, self.config.frame_height),
+			True
+		)
 
-	def send_frame(self, encoded_frame: bytes) -> bool:
+		if not self.writer.isOpened():
+			logger.error(f"[stream-{config.port}] Failed to open GStreamer VideoWriter!")
+
+	def send_frame(self, frame: np.ndarray) -> bool:
 		try:
-			self.footage_socket.send(encoded_frame)
+			self.writer.write(frame)
 			return True
-		except zmq.ZMQError as e:
-			logger.error(f"[stream-{self.config.port}] ZMQ send error: {e}")
+		except Exception as e:
+			logger.error(f"[stream-{self.config.port}] GStreamer send error: {e}")
 			return False
 
 	def close(self):
 		try:
-			self.footage_socket.close()
+			if self.writer is not None:
+				self.writer.release()
 		except Exception as e:
-			logger.error(f"[stream-{self.config.port}] error closing socket: {e}")
-		try:
-			self.context.term()
-		except Exception as e:
-			logger.error(f"[stream-{self.config.port}] error terminating context: {e}")
+			logger.error(f"[stream-{self.config.port}] error closing writer: {e}")
 
 
 def handle_arguments():
 	parser = argparse.ArgumentParser(
 		prog="camera_streamer",
-		description="Streams one or more cameras using OpenCV over ZMQ",
+		description="Streams one or more cameras using OpenCV and GStreamer UDP Multicast",
 	)
 	parser.add_argument(
 		"--base-port",
@@ -211,9 +242,14 @@ def handle_arguments():
 		choices=["on", "off"],
 	)
 	parser.add_argument(
-		"--jpg-quality",
-		type=int_in_range("jpg-quality", 1, 100),
-		help="Quality of jpgs being transmitted (1-100)",
+		"--bitrate",
+		type=int_in_range("bitrate", 1000, 100000000),
+		help="Target video bitrate for hardware h.264 encoding",
+	)
+	parser.add_argument(
+		"--multicast-ip",
+		type=str,
+		help="UDP Multicast IP group for streaming (e.g. 224.1.1.1)",
 	)
 	parser.add_argument(
 		"--target-fps",
@@ -268,7 +304,7 @@ class SingleStreamer:
 
 	def start(self, stop_event: multiprocessing.Event):
 		camera_handler = CameraHandler(self.config)
-		zmq_handler = ZMQHandler(self.config)
+		gstreamer_handler = GStreamerHandler(self.config)
 
 		frame_count = 0
 		frame_interval = 1.0 / self.config.target_fps
@@ -278,10 +314,10 @@ class SingleStreamer:
 			while not stop_event.is_set():
 				frame_start = time.time()
 
-				success, encoded_frame = camera_handler.get_encoded_frame()
-				if not success or encoded_frame is None:
+				success, frame = camera_handler.read_frame()
+				if not success or frame is None:
 					logger.error(
-						f"[stream-{self.config.port}] failed to get encoded frame (failure #{failed_frame_count + 1})"
+						f"[stream-{self.config.port}] failed to read frame (failure #{failed_frame_count + 1})"
 					)
 					# sleep 2^CAMERA_BACKOFF_BASE_SECONDS up to CAMERA_MAX_BACKOFF_SECONDS between failures to avoid tight failure loops
 					time.sleep(
@@ -295,9 +331,9 @@ class SingleStreamer:
 					continue
 				failed_frame_count = 0  # reset on success
 
-				success = zmq_handler.send_frame(encoded_frame)
+				success = gstreamer_handler.send_frame(frame)
 				if not success:
-					logger.error(f"[stream-{self.config.port}] failed to send frame")
+					logger.error(f"[stream-{self.config.port}] failed to send frame via GStreamer")
 					continue
 				frame_count += 1
 
@@ -309,11 +345,11 @@ class SingleStreamer:
 
 		finally:
 			logger.info(
-				f"[stream-{self.config.port}] cleaning up camera and socket (frames sent: {frame_count})"
+				f"[stream-{self.config.port}] cleaning up camera and pipeline (frames sent: {frame_count})"
 			)
 
 			camera_handler.release()
-			zmq_handler.close()
+			gstreamer_handler.close()
 
 
 class MultiStreamer:
@@ -321,8 +357,9 @@ class MultiStreamer:
 		self,
 		base_port: int,
 		camera_ids: List[int],
-		jpg_quality: int,
+		bitrate: int,
 		target_fps: int,
+		multicast_ip: str,
 		simulation: bool = False,
 		grayscale: bool = False,
 	):
@@ -331,8 +368,9 @@ class MultiStreamer:
 				StreamerConfig(
 					port=base_port + idx,
 					camera_id=cam_id,
-					jpg_quality=jpg_quality,
+					bitrate=bitrate,
 					target_fps=target_fps,
+					multicast_ip=multicast_ip,
 					simulation=simulation,
 					grayscale=grayscale,
 				)

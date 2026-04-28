@@ -6,21 +6,21 @@ from common_utils import (
 import threading
 from typing import List, Optional
 import numpy as np
-import zmq
+import os
 import cv2
 import time
 
 logger = get_logger(__name__)
 
-ZMQ_RECEIVE_TIMEOUT_MS = 500
-ZMQ_CONNECTION_POLL_INTERVAL_SECONDS = 0.1
+GSTREAMER_CONNECTION_POLL_INTERVAL_SECONDS = 0.1
 
 def handle_arguments():
 	parser = argparse.ArgumentParser(
 		prog="camera_receiver",
-		description="Receive one or more camera streams over ZMQ",
+		description="Receive one or more camera streams using GStreamer Multicast",
 	)
-	parser.add_argument("--broadcast-ip", type=str, help="IP of the publisher(s)")
+	parser.add_argument("--broadcast-ip", type=str, help="Legacy IP argument (ignored for multicast)")
+	parser.add_argument("--multicast-ip", type=str, help="UDP Multicast IP group for receiving (e.g. 224.1.1.1)")
 	parser.add_argument(
 		"--base-port",
 		type=int,
@@ -93,8 +93,8 @@ class FrameStore:
 			return self._frames.get(stream_name)
 
 class SingleReceiver:
-	def __init__(self, ip: str, port: int, timeout: float, stop_event: threading.Event, frame_store: FrameStore, window_prefix: str):
-		self.ip = ip
+	def __init__(self, multicast_ip: str, port: int, timeout: float, stop_event: threading.Event, frame_store: FrameStore, window_prefix: str):
+		self.multicast_ip = multicast_ip
 		self.port = port
 		self.timeout = timeout
 		self.stop_event = stop_event
@@ -102,19 +102,17 @@ class SingleReceiver:
 		self.window_prefix = window_prefix
 
 	def start(self):
-		context = zmq.Context()
-		footage_socket = context.socket(zmq.SUB)
-		footage_socket.setsockopt(zmq.CONFLATE, 1)
-		footage_socket.setsockopt(zmq.LINGER, 0)
-		footage_socket.connect(f"tcp://{self.ip}:{self.port}")
-		footage_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-		# set a receive timeout so we can check stop_event periodically
-		footage_socket.setsockopt(zmq.RCVTIMEO, ZMQ_RECEIVE_TIMEOUT_MS)
-
+		pipeline = (
+			f"udpsrc multicast-group={self.multicast_ip} port={self.port} auto-multicast=true ! "
+			"application/x-rtp,media=video,clock-rate=90000,payload=96,encoding-name=H264 ! "
+			"rtpjitterbuffer latency=0 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false"
+		)
 		window_name = f"{self.window_prefix}-{self.port}"
-		logger.info(f"Attempting to connect to {self.ip}:{self.port}...")
+		logger.info(f"[{window_name}] Attempting to connect to multicast {self.multicast_ip}:{self.port}...")
+		logger.info(f"[{window_name}] Pipeline: {pipeline}")
 
-		# Verify connection by waiting for first frame (10 second timeout)
+		cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+
 		connection_timeout = self.timeout
 		start_time = time.time()
 		first_frame_received = False
@@ -122,68 +120,40 @@ class SingleReceiver:
 		frame_store_failures = 0
 
 		while not self.stop_event.is_set() and not first_frame_received:
-			try:
-				footage_socket.recv(zmq.NOBLOCK)
-				first_frame_received = True
-				logger.info(
-					f"Connected to {self.ip}:{self.port} -> window '{window_name}'"
-				)
-			except zmq.Again:
-				if time.time() - start_time > connection_timeout:
-					logger.error(
-						f"Failed to connect to {self.ip}:{self.port} (timeout after {connection_timeout}s)"
-					)
-					return
-				time.sleep(ZMQ_CONNECTION_POLL_INTERVAL_SECONDS)
-				continue
+			if cap.isOpened():
+				ret, _ = cap.read()
+				if ret:
+					first_frame_received = True
+					logger.info(f"Connected to {self.multicast_ip}:{self.port} -> window '{window_name}'")
+					break
+			if time.time() - start_time > connection_timeout:
+				logger.error(f"Failed to connect to {self.multicast_ip}:{self.port} (timeout after {connection_timeout}s)")
+				return
+			time.sleep(GSTREAMER_CONNECTION_POLL_INTERVAL_SECONDS)
 
 		if not first_frame_received:
 			return
 
 		try:
 			while not self.stop_event.is_set():
-				try:
-					frame_bytes = footage_socket.recv()
-				except zmq.Again:
-					continue
-
-				try:
-					npimg = np.frombuffer(frame_bytes, dtype=np.uint8)
-					source = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-					if source is None:
-						decode_failures += 1
-						logger.error(
-							f"[{window_name}] frame decode returned None (failure #{decode_failures})"
-						)
-						continue
-					# store the latest frame for the main thread to display
-					frame_store_error = self.frame_store.set_latest(window_name, source)
-					if frame_store_error is not None:
-						frame_store_failures += 1
-						logger.error(
-							f"[{window_name}] frame store failed (failure #{frame_store_failures}): {frame_store_error}"
-						)
-						# if storing fails, skip this frame
-						continue
-				except ValueError as exc:
+				ret, source = cap.read()
+				if not ret or source is None:
 					decode_failures += 1
-					logger.error(
-						f"[{window_name}] malformed frame payload: {exc}"
-					)
-					# skip malformed frames
+					logger.error(f"[{window_name}] frame decode returned None (failure #{decode_failures})")
+					time.sleep(0.01)
 					continue
+				
+				frame_store_error = self.frame_store.set_latest(window_name, source)
+				if frame_store_error is not None:
+					frame_store_failures += 1
+					logger.error(f"[{window_name}] frame store failed (failure #{frame_store_failures}): {frame_store_error}")
 		finally:
-			# remove any stored frame for this window
 			self.frame_store.remove_stream(window_name)
-			footage_socket.close()
-			try:
-				context.term()
-			except Exception:
-				pass
+			cap.release()
 
 class MultiReceiver:
-	def __init__(self, ip: str, ports: List[int], timeout: float, window_prefix: str):
-		self.ip = ip
+	def __init__(self, multicast_ip: str, ports: List[int], timeout: float, window_prefix: str):
+		self.multicast_ip = multicast_ip
 		self.ports = ports
 		self.timeout = timeout
 		self.window_prefix = window_prefix
@@ -196,7 +166,7 @@ class MultiReceiver:
 
 	def start(self):
 		for port in self.ports:
-			sub_receiver = SingleReceiver(self.ip, port, self.timeout, self.stop_event, self.frame_store, self.window_prefix)
+			sub_receiver = SingleReceiver(self.multicast_ip, port, self.timeout, self.stop_event, self.frame_store, self.window_prefix)
 			t = threading.Thread(target=sub_receiver.start, daemon=True)
 			t.start()
 			self.threads.append(t)

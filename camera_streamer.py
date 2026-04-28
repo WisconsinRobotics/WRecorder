@@ -1,4 +1,3 @@
-import cv2
 import time
 import multiprocessing
 import json
@@ -15,6 +14,8 @@ from common_utils import (
 	has_valid_sequential_port_range,
 	install_stop_signal_handlers,
 )
+
+import cv2
 from streamer_utils import (
 	resolve_local_ip, 
 	StreamerConfig,
@@ -35,6 +36,7 @@ def announce_stream_config(
 	stop_event: multiprocessing.Event,
 	streamer_name: str,
 	streamer_ip: str,
+	multicast_ip: str,
 	base_port: int,
 	camera_ids: List[int],
 	discovery_port: int,
@@ -53,6 +55,7 @@ def announce_stream_config(
 		"version": DISCOVERY_VERSION,
 		"streamer_name": streamer_name,
 		"streamer_ip": streamer_ip,
+		"multicast_ip": multicast_ip,
 		"base_port": base_port,
 		"stream_count": len(camera_ids),
 		"camera_ids": camera_ids,
@@ -60,7 +63,7 @@ def announce_stream_config(
 
 	logger.info(
 		f"[discovery] Announcing '{streamer_name}' on UDP {discovery_port} "
-		f"(base_port={base_port}, streams={len(camera_ids)})"
+		f"(multicast={multicast_ip}, base_port={base_port}, streams={len(camera_ids)})"
 	)
 	logger.info(
 		f"[discovery] payload: streamer_ip={streamer_ip}, camera_ids={camera_ids}, "
@@ -88,7 +91,7 @@ def find_available_cameras() -> List[int]:
 	for cam_id in range(CAMERA_SCAN_START, CAMERA_SCAN_STOP, CAMERA_SCAN_STEP):
 		if f"video{cam_id}" not in os.listdir("/dev"):
 			continue
-		cap = cv2.VideoCapture(cam_id)
+		cap = cv2.VideoCapture(cam_id, cv2.CAP_V4L2)
 		if cap.isOpened():
 			available_cameras.append(cam_id)
 			cap.release()
@@ -96,11 +99,16 @@ def find_available_cameras() -> List[int]:
 
 
 if __name__ == "__main__":
+	try:
+		multiprocessing.set_start_method("spawn")
+	except RuntimeError:
+		pass
 	args = handle_arguments()
 
 	base_port = args.base_port
 	camera_ids = args.camera_ids
-	jpg_quality = args.jpg_quality
+	bitrate = args.bitrate
+	multicast_ip = args.multicast_ip
 	target_fps = args.target_fps
 	simulate_cameras = args.simulate_cameras
 	streamer_name = args.streamer_name
@@ -130,12 +138,11 @@ if __name__ == "__main__":
 		)
 		exit(2)
 
-	streamer = MultiStreamer(base_port, camera_ids, jpg_quality, target_fps, simulation=simulate_cameras is not None, grayscale=grayscale)
+	streamer = MultiStreamer(base_port, camera_ids, bitrate, target_fps, multicast_ip, simulation=simulate_cameras is not None, grayscale=grayscale)
 	streamer.start()
 
 	discovery_thread = None
 	if announce_discovery:
-		print("[discovery] ")
 		streamer_ip = resolve_local_ip()
 		discovery_thread = threading.Thread(
 			target=announce_stream_config,
@@ -143,6 +150,7 @@ if __name__ == "__main__":
 				streamer.stop_event,
 				streamer_name,
 				streamer_ip,
+				multicast_ip,
 				base_port,
 				camera_ids,
 				discovery_port,
@@ -155,15 +163,18 @@ if __name__ == "__main__":
 	install_stop_signal_handlers(streamer.stop_event.set, logger, "Stopping streams...")
 
 	try:
-		for p in streamer.processes:
-			p.join()
+		while not streamer.stop_event.is_set() and any(p.is_alive() for p in streamer.processes):
+			time.sleep(0.1)
 	except KeyboardInterrupt:
 		logger.info("Keyboard interrupt received. Stopping streams...")
 		streamer.stop_event.set()
+	finally:
 		for p in streamer.processes:
-			p.join(timeout=2)
+			p.join(timeout=1.0)
 			if p.is_alive():
+				logger.warning(f"Streamer process {p.pid} did not exit cleanly, terminating...")
 				p.terminate()
+				p.join()
 
 	if discovery_thread is not None:
 		discovery_thread.join(timeout=1)

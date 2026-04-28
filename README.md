@@ -1,7 +1,7 @@
 
 # WRecorder
 
-WRecorder provides multi-camera streaming between machines using OpenCV + ZeroMQ.
+WRecorder provides multi-camera streaming between machines using OpenCV + GStreamer over UDP Multicast.
 
 ## Active files
 
@@ -21,18 +21,29 @@ Both scripts require [argument_defaults.json](argument_defaults.json) at runtime
 
 ## Prerequisites
 
-- Python 3.7+
-- Streamer packages:
+- Python 3.12 (specifically 3.12)
+- GStreamer, GTK, v4l2, and other system dependencies
 
+### Building the Project
+
+Because this project relies on GStreamer and custom OpenCV builds to support zero-latency streaming pipelines, it is highly recommended to use the provided Makefile for installation.
+
+Install system dependencies:
 ```sh
-python3 -m pip install opencv-python-headless pyzmq
+make deps
 ```
 
-- Receiver packages:
-
+Compile and install OpenCV with GTK header support (Required to view windows, usually on your local debug machine):
 ```sh
-python3 -m pip install opencv-python pyzmq
+make install-headed
 ```
+
+Compile and install OpenCV without GTK blockages (Required for raw streamers like the Raspberry Pi):
+```sh
+make install-headless
+```
+
+FYI: make install-* build OpenCV from source which will take a significant amount of time (15-60+ minutes depending on machine).
 
 ## Quick start
 
@@ -57,7 +68,8 @@ Current CLI flags for [camera_streamer.py](camera_streamer.py):
 - `--base-port`: Starting port for first camera stream; additional streams use `base-port + index`. Current default from [argument_defaults.json](argument_defaults.json): `5555`.
 - `--camera-ids`: Space-separated camera IDs (example: `--camera-ids 0 2 4`). Current default from [argument_defaults.json](argument_defaults.json): `[0]`.
 - `--auto-find-cameras`: `on|off`; auto-detect cameras and override `--camera-ids`. Current default from [argument_defaults.json](argument_defaults.json): `on`.
-- `--jpg-quality`: JPEG quality in range `1-100`. Current default from [argument_defaults.json](argument_defaults.json): `20`.
+- `--multicast-ip`: UDP Multicast IP group for streaming (e.g. `224.1.1.1`). Current default from [argument_defaults.json](argument_defaults.json): `224.1.1.1`.
+- `--bitrate`: Target H.264 stream bitrate in bps. Current default from [argument_defaults.json](argument_defaults.json): `500000`.
 - `--target-fps`: Target stream FPS, must be `>= 1`. Current default from [argument_defaults.json](argument_defaults.json): `30`.
 - `--simulate-cameras`: Simulate `N` cameras instead of real devices (must be `>= 1`). Current default from [argument_defaults.json](argument_defaults.json): `null` (disabled).
 - `--streamer-name`: Discovery identity name for receiver filtering. Current default from [argument_defaults.json](argument_defaults.json): `wrecorder-streamer`.
@@ -69,7 +81,8 @@ Current CLI flags for [camera_streamer.py](camera_streamer.py):
 
 Current CLI flags for [camera_receiver.py](camera_receiver.py):
 
-- `--broadcast-ip`: Publisher IP address. Current default from [argument_defaults.json](argument_defaults.json): `0.0.0.0`.
+- `--multicast-ip`: UDP Multicast IP group for receiving (e.g. `224.1.1.1`). Current default from [argument_defaults.json](argument_defaults.json): `224.1.1.1`.
+- `--broadcast-ip`: Legacy Publisher IP address (ignored for multicast). Current default from [argument_defaults.json](argument_defaults.json): `0.0.0.0`.
 - `--base-port`: Starting port for first subscribed stream; additional streams use `base-port + index`. Current default from [argument_defaults.json](argument_defaults.json): `5555`.
 - `--count`: Number of sequential ports to subscribe to, starting at `base-port`. Current default from [argument_defaults.json](argument_defaults.json): `1`.
 - `--timeout`: Total setup timeout in seconds (discovery + initial connection). Current default from [argument_defaults.json](argument_defaults.json): `10.0`.
@@ -90,7 +103,7 @@ nmtui
 Manual streamer setup:
 
 ```sh
-python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --jpg-quality 30 --target-fps 30
+python3 camera_streamer.py --base-port 5555 --camera-ids 0 2 4 --bitrate 500000 --target-fps 30
 ```
 
 Discovery receiver with filter:
