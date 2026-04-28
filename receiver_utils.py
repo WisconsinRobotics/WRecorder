@@ -6,7 +6,6 @@ from common_utils import (
 import threading
 from typing import List, Optional
 import numpy as np
-import os
 import cv2
 import time
 
@@ -175,7 +174,7 @@ class MultiReceiver:
 	def stop(self):
 		self.stop_event.set()
 		for t in self.threads:
-			t.join()
+			t.join(timeout=5.0)
 
 	def get_frame(self, stream_name: str):
 		return self.frame_store.get_frame(stream_name)

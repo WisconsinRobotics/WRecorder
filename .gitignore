@@ -9,3 +9,5 @@ ruff.toml
 .ruff_cache
 
 temp.py
+
+.temp-venv

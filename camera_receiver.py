@@ -9,7 +9,6 @@ from common_utils import (
 
 import cv2
 import socket
-from typing import Optional
 import time
 from receiver_utils import handle_arguments, MultiReceiver
 

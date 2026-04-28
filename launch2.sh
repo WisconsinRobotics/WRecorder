@@ -31,6 +31,5 @@ fi
     --base-port 5555 \
     --streamer-name cam-pi-2 \
     --auto-find-cameras on \
-    --jpg-quality 20 \
     --target-fps 30 \
     --grayscale on
