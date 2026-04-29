@@ -5,6 +5,7 @@ from common_utils import (
 	install_stop_signal_handlers,
 	parse_discovery_payload,
 	clamp,
+	MULTICAST_IP,
 )
 
 import cv2
@@ -52,7 +53,7 @@ def discover_stream_config(
 
 			logger.info(
 				f"Discovered '{discovered['streamer_name']}' at {discovered['streamer_ip']} "
-				f"(multicast={discovered.get('multicast_ip', 'unknown')}, base_port={discovered['base_port']}, streams={discovered['stream_count']})"
+				f"(base_port={discovered['base_port']}, streams={discovered['stream_count']})"
 			)
 			return discovered
 	finally:
@@ -64,7 +65,6 @@ def discover_stream_config(
 if __name__ == "__main__":
 	args = handle_arguments()
 
-	multicast_ip = args.multicast_ip
 	base_port = args.base_port
 	stream_count = args.count
 	timeout = args.timeout
@@ -86,7 +86,6 @@ if __name__ == "__main__":
 		)
 
 		if discovered is not None:
-			multicast_ip = discovered.get("multicast_ip", discovered["streamer_ip"])
 			base_port = discovered["base_port"]
 			stream_count = discovered["stream_count"]
 			window_prefix = discovered["streamer_name"]
@@ -103,11 +102,11 @@ if __name__ == "__main__":
 		exit(2)
 
 	logger.info(
-		f"Receiver config: multicast_ip={multicast_ip}, base_port={base_port}, "
+		f"Receiver config: multicast_ip={MULTICAST_IP}, base_port={base_port}, "
 		f"count={stream_count}, timeout={connection_timeout:.1f}s"
 	)
 
-	receiver = MultiReceiver(multicast_ip, ports, connection_timeout, window_prefix)
+	receiver = MultiReceiver(ports, connection_timeout, window_prefix)
 	receiver.start()
 
 	install_stop_signal_handlers(receiver.stop_event.set, logger, "Stopping receivers...")

@@ -13,14 +13,13 @@ from common_utils import (
 	are_non_negative_ints,
 	has_valid_sequential_port_range,
 	install_stop_signal_handlers,
+	MULTICAST_IP,
 )
 
 import cv2
 from streamer_utils import (
-	resolve_local_ip, 
-	StreamerConfig,
+	resolve_local_ip,
 	handle_arguments,
-	SingleStreamer,
 	MultiStreamer,
 )
 
@@ -55,7 +54,6 @@ def announce_stream_config(
 		"version": DISCOVERY_VERSION,
 		"streamer_name": streamer_name,
 		"streamer_ip": streamer_ip,
-		"multicast_ip": multicast_ip,
 		"base_port": base_port,
 		"stream_count": len(camera_ids),
 		"camera_ids": camera_ids,
@@ -63,7 +61,7 @@ def announce_stream_config(
 
 	logger.info(
 		f"[discovery] Announcing '{streamer_name}' on UDP {discovery_port} "
-		f"(multicast={multicast_ip}, base_port={base_port}, streams={len(camera_ids)})"
+		f"(base_port={base_port}, streams={len(camera_ids)})"
 	)
 	logger.info(
 		f"[discovery] payload: streamer_ip={streamer_ip}, camera_ids={camera_ids}, "
@@ -108,7 +106,6 @@ if __name__ == "__main__":
 	base_port = args.base_port
 	camera_ids = args.camera_ids
 	bitrate = args.bitrate
-	multicast_ip = args.multicast_ip
 	target_fps = args.target_fps
 	simulate_cameras = args.simulate_cameras
 	streamer_name = args.streamer_name
@@ -138,7 +135,7 @@ if __name__ == "__main__":
 		)
 		exit(2)
 
-	streamer = MultiStreamer(base_port, camera_ids, bitrate, target_fps, multicast_ip, simulation=simulate_cameras is not None, grayscale=grayscale)
+	streamer = MultiStreamer(base_port, camera_ids, bitrate, target_fps, MULTICAST_IP, simulation=simulate_cameras is not None, grayscale=grayscale)
 	streamer.start()
 
 	discovery_thread = None
@@ -150,7 +147,7 @@ if __name__ == "__main__":
 				streamer.stop_event,
 				streamer_name,
 				streamer_ip,
-				multicast_ip,
+				MULTICAST_IP,
 				base_port,
 				camera_ids,
 				discovery_port,

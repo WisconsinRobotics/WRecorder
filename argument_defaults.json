@@ -1,8 +1,7 @@
 {
   "both": {
     "base_port": 5555,
-    "discovery_port": 5550,
-    "multicast_ip": "224.1.1.1"
+    "discovery_port": 5550
   },
   "streamer-only": {
     "camera_ids": [0],

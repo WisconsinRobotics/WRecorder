@@ -13,6 +13,7 @@ DISCOVERY_VERSION = 1
 DISCOVERY_TEXT_ENCODING = "utf8"
 VALID_PORT_MIN = 1
 VALID_PORT_MAX = 65535
+MULTICAST_IP = "224.1.1.1"  # Hardcoded constant for all streamer/receiver pairs
 
 
 class LoggingFormatter(logging.Formatter):
@@ -106,7 +107,6 @@ def parse_discovery_payload(
 	streamer_ip = str(payload.get("streamer_ip", "")).strip()
 	base_port = payload.get("base_port")
 	stream_count = payload.get("stream_count")
-	multicast_ip = payload.get("multicast_ip")
 
 	if streamer_name_filter and streamer_name != streamer_name_filter:
 		return None
@@ -123,7 +123,6 @@ def parse_discovery_payload(
 	return {
 		"streamer_name": streamer_name,
 		"streamer_ip": streamer_ip,
-		"multicast_ip": multicast_ip,
 		"base_port": base_port,
 		"stream_count": stream_count,
 	}

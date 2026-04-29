@@ -12,12 +12,7 @@ WRecorder provides multi-camera streaming between machines using OpenCV + GStrea
 
 ## Runtime defaults (required)
 
-Both scripts require [argument_defaults.json](argument_defaults.json) at runtime.
-
-- Sections: `both`, `streamer-only`, `receiver-only`
-- Behavior: missing/invalid file causes fail-fast startup error.
-- Behavior: unknown keys or missing required keys also cause fail-fast startup error.
-- Precedence: CLI flags override values from [argument_defaults.json](argument_defaults.json).
+Both scripts require [argument_defaults.json](argument_defaults.json) at runtime with sections `both`, `streamer-only`, `receiver-only`. Missing/invalid files, unknown keys, or missing required keys cause fail-fast startup errors. CLI flags override JSON values.
 
 ## Prerequisites
 
@@ -59,37 +54,35 @@ Start receiver:
 python3 camera_receiver.py
 ```
 
-Use discovery by default (`announce_discovery=on`, `auto_config=on` in defaults file) or override per run with CLI flags.
+By default, receiver uses `auto-config=on` to auto-discover available streamers and their port ranges. Override discovery with `--auto-config off` and manual flags, or filter by streamer name with `--streamer-name-filter`. Multicast IP is always `224.1.1.1`.
 
 ## Camera streamer arguments
 
-Current CLI flags for [camera_streamer.py](camera_streamer.py):
-
-- `--base-port`: Starting port for first camera stream; additional streams use `base-port + index`. Current default from [argument_defaults.json](argument_defaults.json): `5555`.
-- `--camera-ids`: Space-separated camera IDs (example: `--camera-ids 0 2 4`). Current default from [argument_defaults.json](argument_defaults.json): `[0]`.
-- `--auto-find-cameras`: `on|off`; auto-detect cameras and override `--camera-ids`. Current default from [argument_defaults.json](argument_defaults.json): `on`.
-- `--multicast-ip`: UDP Multicast IP group for streaming (e.g. `224.1.1.1`). Current default from [argument_defaults.json](argument_defaults.json): `224.1.1.1`.
-- `--bitrate`: Target H.264 stream bitrate in bps. Current default from [argument_defaults.json](argument_defaults.json): `500000`.
-- `--target-fps`: Target stream FPS, must be `>= 1`. Current default from [argument_defaults.json](argument_defaults.json): `30`.
-- `--simulate-cameras`: Simulate `N` cameras instead of real devices (must be `>= 1`). Current default from [argument_defaults.json](argument_defaults.json): `null` (disabled).
-- `--streamer-name`: Discovery identity name for receiver filtering. Current default from [argument_defaults.json](argument_defaults.json): `wrecorder-streamer`.
-- `--announce-discovery`: `on|off`; broadcast discovery metadata. Current default from [argument_defaults.json](argument_defaults.json): `on`.
-- `--discovery-port`: UDP discovery port, valid range `1-65535`. Current default from [argument_defaults.json](argument_defaults.json): `5550`.
-- `--discovery-interval`: Seconds between discovery packets. Current default from [argument_defaults.json](argument_defaults.json): `1.0`.
+| Argument | Description | Default | Expected Input |
+|----------|-------------|---------|----------------|
+| `--base-port` | Starting port for first camera stream; additional streams use `base-port + index` | `5555` | `1-65535` |
+| `--camera-ids` | Space-separated camera IDs | `[0]` | Camera device indices (e.g., `0 2 4`) |
+| `--auto-find-cameras` | Auto-detect cameras and override `--camera-ids` | `on` | `on\|off` |
+| `--bitrate` | Target H.264 stream bitrate | `250000` | bps (`>= 1`) |
+| `--target-fps` | Target stream FPS | `30` | `>= 1` |
+| `--simulate-cameras` | Simulate N cameras instead of real devices | `null` (disabled) | `>= 1` or `null` |
+| `--streamer-name` | Discovery identity name for receiver filtering | `wrecorder-streamer` | String |
+| `--announce-discovery` | Broadcast discovery metadata (streamer name + port range) | `on` | `on\|off` |
+| `--discovery-port` | UDP discovery port | `5550` | `1-65535` |
+| `--discovery-interval` | Seconds between discovery packets | `1.0` | Seconds (float) |
 
 ## Camera receiver arguments
 
-Current CLI flags for [camera_receiver.py](camera_receiver.py):
-
-- `--multicast-ip`: UDP Multicast IP group for receiving (e.g. `224.1.1.1`). Current default from [argument_defaults.json](argument_defaults.json): `224.1.1.1`.
-- `--broadcast-ip`: Legacy Publisher IP address (ignored for multicast). Current default from [argument_defaults.json](argument_defaults.json): `0.0.0.0`.
-- `--base-port`: Starting port for first subscribed stream; additional streams use `base-port + index`. Current default from [argument_defaults.json](argument_defaults.json): `5555`.
-- `--count`: Number of sequential ports to subscribe to, starting at `base-port`. Current default from [argument_defaults.json](argument_defaults.json): `1`.
-- `--timeout`: Total setup timeout in seconds (discovery + initial connection). Current default from [argument_defaults.json](argument_defaults.json): `10.0`.
-- `--auto-config`: `on|off`; auto-configure from discovery announcements. Current default from [argument_defaults.json](argument_defaults.json): `on`.
-- `--streamer-name-filter`: Accept only matching streamer name from discovery. Current default from [argument_defaults.json](argument_defaults.json): `null` (no filter).
-- `--discovery-port`: UDP discovery port. Current default from [argument_defaults.json](argument_defaults.json): `5550`.
-- `--discovery-timeout`: Discovery phase timeout override in seconds. Current default from [argument_defaults.json](argument_defaults.json): `null` (auto budget).
+| Argument | Description | Default | Expected Input |
+|----------|-------------|---------|----------------|
+| `--broadcast-ip` | Legacy Publisher IP (ignored for multicast) | `0.0.0.0` | IP address |
+| `--base-port` | Starting port for first subscribed stream | `5555` | `1-65535` |
+| `--count` | Number of sequential ports to subscribe to | `1` | Integer `>= 1` |
+| `--timeout` | Total setup timeout | `10.0` | Seconds (float) |
+| `--auto-config` | Auto-configure from discovery announcements | `on` | `on\|off` |
+| `--streamer-name-filter` | Accept only matching streamer name from discovery | `null` (no filter) | String or `null` |
+| `--discovery-port` | UDP discovery port | `5550` | `1-65535` |
+| `--discovery-timeout` | Discovery phase timeout override | `null` (auto budget) | Seconds (float) or `null` |
 
 ## How to connect to different networks on the Pi
 

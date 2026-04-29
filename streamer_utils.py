@@ -247,11 +247,6 @@ def handle_arguments():
 		help="Target video bitrate for hardware h.264 encoding",
 	)
 	parser.add_argument(
-		"--multicast-ip",
-		type=str,
-		help="UDP Multicast IP group for streaming (e.g. 224.1.1.1)",
-	)
-	parser.add_argument(
 		"--target-fps",
 		type=int_in_range("target-fps", 1),
 		help="Target frames per second for streaming",

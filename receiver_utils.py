@@ -2,6 +2,7 @@ import argparse
 from common_utils import (
 	apply_required_external_defaults,
 	get_logger,
+	MULTICAST_IP,
 )
 import threading
 from typing import List, Optional
@@ -19,7 +20,6 @@ def handle_arguments():
 		description="Receive one or more camera streams using GStreamer Multicast",
 	)
 	parser.add_argument("--broadcast-ip", type=str, help="Legacy IP argument (ignored for multicast)")
-	parser.add_argument("--multicast-ip", type=str, help="UDP Multicast IP group for receiving (e.g. 224.1.1.1)")
 	parser.add_argument(
 		"--base-port",
 		type=int,
@@ -92,8 +92,7 @@ class FrameStore:
 			return self._frames.get(stream_name)
 
 class SingleReceiver:
-	def __init__(self, multicast_ip: str, port: int, timeout: float, stop_event: threading.Event, frame_store: FrameStore, window_prefix: str):
-		self.multicast_ip = multicast_ip
+	def __init__(self, port: int, timeout: float, stop_event: threading.Event, frame_store: FrameStore, window_prefix: str):
 		self.port = port
 		self.timeout = timeout
 		self.stop_event = stop_event
@@ -102,12 +101,12 @@ class SingleReceiver:
 
 	def start(self):
 		pipeline = (
-			f"udpsrc multicast-group={self.multicast_ip} port={self.port} auto-multicast=true ! "
+			f"udpsrc multicast-group={MULTICAST_IP} port={self.port} auto-multicast=true ! "
 			"application/x-rtp,media=video,clock-rate=90000,payload=96,encoding-name=H264 ! "
 			"rtpjitterbuffer latency=0 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false"
 		)
 		window_name = f"{self.window_prefix}-{self.port}"
-		logger.info(f"[{window_name}] Attempting to connect to multicast {self.multicast_ip}:{self.port}...")
+		logger.info(f"[{window_name}] Attempting to connect to multicast {MULTICAST_IP}:{self.port}...")
 		logger.info(f"[{window_name}] Pipeline: {pipeline}")
 
 		cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
@@ -123,10 +122,10 @@ class SingleReceiver:
 				ret, _ = cap.read()
 				if ret:
 					first_frame_received = True
-					logger.info(f"Connected to {self.multicast_ip}:{self.port} -> window '{window_name}'")
+					logger.info(f"Connected to {MULTICAST_IP}:{self.port} -> window '{window_name}'")
 					break
 			if time.time() - start_time > connection_timeout:
-				logger.error(f"Failed to connect to {self.multicast_ip}:{self.port} (timeout after {connection_timeout}s)")
+				logger.error(f"Failed to connect to {MULTICAST_IP}:{self.port} (timeout after {connection_timeout}s)")
 				return
 			time.sleep(GSTREAMER_CONNECTION_POLL_INTERVAL_SECONDS)
 
@@ -151,8 +150,7 @@ class SingleReceiver:
 			cap.release()
 
 class MultiReceiver:
-	def __init__(self, multicast_ip: str, ports: List[int], timeout: float, window_prefix: str):
-		self.multicast_ip = multicast_ip
+	def __init__(self, ports: List[int], timeout: float, window_prefix: str):
 		self.ports = ports
 		self.timeout = timeout
 		self.window_prefix = window_prefix
@@ -165,7 +163,7 @@ class MultiReceiver:
 
 	def start(self):
 		for port in self.ports:
-			sub_receiver = SingleReceiver(self.multicast_ip, port, self.timeout, self.stop_event, self.frame_store, self.window_prefix)
+			sub_receiver = SingleReceiver(port, self.timeout, self.stop_event, self.frame_store, self.window_prefix)
 			t = threading.Thread(target=sub_receiver.start, daemon=True)
 			t.start()
 			self.threads.append(t)
