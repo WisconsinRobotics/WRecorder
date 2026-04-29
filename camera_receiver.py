@@ -1,6 +1,5 @@
 import cv2
 import socket
-from typing import Optional
 import time
 from common_utils import (
 	get_logger,
