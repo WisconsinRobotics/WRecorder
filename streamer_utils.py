@@ -2,6 +2,7 @@ import ipaddress
 import cv2
 import numpy as np
 import time
+import os
 from common_utils import (
 	int_in_range,
 	apply_required_external_defaults,
@@ -26,6 +27,10 @@ STARTUP_STAGGER_SECONDS = 1
 
 
 def resolve_local_ip() -> str:
+	env_ip = os.environ.get("WRECORDER_STREAMER_IP")
+	if env_ip:
+		return env_ip
+
 	result = subprocess.run(["hostname", "-I"], capture_output=True, text=True)
 	if result.stdout:
 		try:
