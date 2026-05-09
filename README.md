@@ -16,62 +16,25 @@ Both scripts require [argument_defaults.json](argument_defaults.json) at runtime
 
 ## Prerequisites
 
-- Python 3.12 (specifically 3.12)
-- GStreamer, GTK, v4l2, and other system dependencies
+- Python 3.13 (specifically 3.13)
+- GStreamer, GTK, and system dependencies
+- pip packages (installed via virtual environment)
 
-### Building the Project
+### Quick Installation
 
-Because this project relies on GStreamer and custom OpenCV builds to support streaming pipelines, it is highly recommended to use the provided `Makefile` for installation.
+1. **Install system dependencies, create virtual environment, & install Python packages:**
 
-Common `Makefile` targets:
-
-- `make deps` — install system packages required for building OpenCV and GStreamer.
-- `make source-build-headed` — build and install `opencv-python` from source with GStreamer and GTK enabled (for systems with a display).
-- `make source-build-headless` — build and install `opencv-python-headless` from source with GStreamer enabled (headless systems like Raspberry Pi).
-- `make prebuilt-headed-x86_64` — download and install a prebuilt x86_64 wheel (if available). This is for the **base station**.
-- `make prebuilt-headless-arm64` — download and install a prebuilt arm64 wheel (if available). This is for the **Raspberry Pis**.
-- `make check` — verify OpenCV was built with GStreamer support.
-
-Notes:
-
-- The Makefile prefers a virtual environment in `.venv` or `env` and sets `PY`/`PIP` accordingly; activate your venv first to ensure the correct Python is used.
-- Building from source can take 15–60+ minutes depending on CPU. Use the prebuilt targets when suitable to skip local compilation.
-- If the receiving machine is ARM-based you must use `source-build-headed` as prebuilt wheels are only provided for x86_64 at this time.
-- If the streaming machine is x86_64-based but doesn't have a display you must use `source-build-headless` as the prebuilt wheel for x86_64 is built with GTK support which requires a display.
-
-Examples:
-
-Install system dependencies:
 ```sh
-make deps
+make setup
 ```
 
-Build OpenCV for a local GUI/debug machine:
-```sh
-make source-build-headed
-```
+If this isn't working, read through the `Makefile` to understand the steps and try running them manually. Common issues include missing GStreamer plugins or Python dependencies.
 
-Build OpenCV for headless devices (e.g., Raspberry Pi):
-```sh
-make source-build-headless
-```
+### Notes
 
-Download and install a prebuilt wheel (x86_64 example):
-```sh
-make prebuilt-headed-x86_64
-```
-
-Download and install a prebuilt wheel (arm64 example):
-```sh
-make prebuilt-headless-arm64
-```
-
-Verify OpenCV GStreamer support:
-```sh
-make check
-```
-
-FYI: make install-* build OpenCV from source which will take a significant amount of time (15-60+ minutes depending on machine).
+- The `Makefile` will detect your virtual environment (`.venv` or `env`) and use it automatically.
+- PyQt6 is now used for the receiver GUI instead of OpenCV's window management.
+- Make sure you have an existing OpenCV build with GStreamer support. If you don't, consider building it separately or obtaining a prebuilt wheel.
 
 ## Quick start
 

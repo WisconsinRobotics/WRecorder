@@ -1,0 +1,4 @@
+numpy==2.2.6
+pillow==12.2.0
+PyGObject==3.56.2
+PyQt6==6.11.0

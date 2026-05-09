@@ -16,7 +16,6 @@ from common_utils import (
 	MULTICAST_IP,
 )
 
-import cv2
 from streamer_utils import (
 	resolve_local_ip,
 	handle_arguments,
@@ -87,12 +86,9 @@ def announce_stream_config(
 def find_available_cameras() -> List[int]:
 	available_cameras = []
 	for cam_id in range(CAMERA_SCAN_START, CAMERA_SCAN_STOP, CAMERA_SCAN_STEP):
-		if f"video{cam_id}" not in os.listdir("/dev"):
-			continue
-		cap = cv2.VideoCapture(cam_id, cv2.CAP_V4L2)
-		if cap.isOpened():
+		device_path = f"/dev/video{cam_id}"
+		if os.path.exists(device_path):
 			available_cameras.append(cam_id)
-			cap.release()
 	return available_cameras
 
 

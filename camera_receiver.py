@@ -1,4 +1,3 @@
-import os
 from common_utils import (
 	get_logger,
 	build_sequential_ports,
@@ -8,10 +7,11 @@ from common_utils import (
 	MULTICAST_IP,
 )
 
-import cv2
 import socket
 import time
-from receiver_utils import handle_arguments, MultiReceiver
+from receiver_utils import handle_arguments, MultiReceiver, StreamDisplayWidget
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QTimer, QCoreApplication
 
 logger = get_logger(__name__)
 
@@ -20,10 +20,8 @@ DISCOVERY_BUFFER_SIZE_BYTES = 4096
 MIN_TIMEOUT_SECONDS = 1.0
 DISCOVERY_TIMEOUT_SECONDS = 5.0
 WARN_EVERY_N_FAILURES = 50
-DISPLAY_WAIT_KEY_MS = 30
-QT_FONTS_DIR = "./fonts"
-
-os.environ["QT_QPA_FONTDIR"] = QT_FONTS_DIR
+DISPLAY_UPDATE_MS = 30
+GRID_COLS = 4
 
 def discover_stream_config(
 	discovery_port: int, timeout: float, streamer_name_filter: str = None
@@ -111,32 +109,36 @@ if __name__ == "__main__":
 
 	install_stop_signal_handlers(receiver.stop_event.set, logger, "Stopping receivers...")
 
-	logger.info("Press 'q' in any window to quit")
+	# Create PyQt application
+	app = QApplication([])
+	window = StreamDisplayWidget(receiver, GRID_COLS)
+	window.show()
 
+	logger.info("PyQt6 display window opened")
+
+	# Start update timer
+	timer = QTimer()
+	timer.timeout.connect(window.update_frames)
+	timer.start(DISPLAY_UPDATE_MS)
+
+	# Poll for external stop_event (SIGINT/SIGTERM) and quit Qt when set
+	poll_timer = QTimer()
+	poll_timer.timeout.connect(lambda: QCoreApplication.quit() if receiver.stop_event.is_set() else None)
+	poll_timer.start(100)
+
+	# Run event loop
 	try:
-		# Main loop handles displaying frames so GUI calls happen on main thread
-		while (
-			any(t.is_alive() for t in receiver.threads)
-			and not receiver.stop_event.is_set()
-		):
-			stream_names = receiver.get_stream_names()
-			for name in stream_names:
-				frame = receiver.get_frame(name)
-				if frame is None:
-					continue
-				cv2.imshow(name, frame)
-			if cv2.waitKey(DISPLAY_WAIT_KEY_MS) & 0xFF == ord("q"):
-				logger.info("Quit key pressed. Stopping receivers...")
-				receiver.stop()
-				break
+		exit_code = app.exec()
 	except KeyboardInterrupt:
-		logger.info("Keyboard interrupt received. Stopping receivers...")
+		logger.info("Keyboard interrupt received.")
+		exit_code = 0
+	finally:
+		logger.info("Stopping receivers...")
 		receiver.stop()
-
-	# destroy any remaining windows
-	try:
-		cv2.destroyAllWindows()
-	except Exception:
-		pass
+		timer.stop()
+		try:
+			poll_timer.stop()
+		except Exception:
+			pass
 
 	logger.info("All receivers stopped")

@@ -14,6 +14,8 @@ DISCOVERY_TEXT_ENCODING = "utf8"
 VALID_PORT_MIN = 1
 VALID_PORT_MAX = 65535
 MULTICAST_IP = "224.1.1.1"  # Hardcoded constant for all streamer/receiver pairs
+CAMERA_FRAME_WIDTH = 640
+CAMERA_FRAME_HEIGHT = 640
 
 
 class LoggingFormatter(logging.Formatter):

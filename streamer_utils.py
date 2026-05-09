@@ -1,29 +1,61 @@
 import ipaddress
-import cv2
-import numpy as np
 import time
 import os
-from common_utils import (
-	int_in_range,
-	apply_required_external_defaults,
-	VALID_PORT_MIN,
-	VALID_PORT_MAX,
-	get_logger,
-	clamp,
-)
+import gi
 import argparse
 import subprocess
 import multiprocessing
 from typing import List
 
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst  # noqa: E402
+from common_utils import (  # noqa: E402
+	int_in_range,
+	apply_required_external_defaults,
+	VALID_PORT_MIN,
+	VALID_PORT_MAX,
+	get_logger,
+	CAMERA_FRAME_WIDTH,
+	CAMERA_FRAME_HEIGHT,
+)
+
 logger = get_logger(__name__)
 
-CAMERA_FRAME_WIDTH = 640
-CAMERA_FRAME_HEIGHT = 640
+# Initialize GStreamer
+Gst.init(None)
 
 CAMERA_BACKOFF_BASE_SECONDS = 0.2
 CAMERA_MAX_BACKOFF_SECONDS = 10
 STARTUP_STAGGER_SECONDS = 1
+
+VIDEOTEST_PATTERNS = [
+	"smpte",
+	"snow",
+	"black",
+	"white",
+	"red",
+	"green",
+	"blue",
+	"checkers-1",
+	"checkers-2",
+	"checkers-4",
+	"checkers-8",
+	"circular",
+	"blink",
+	"smpte75",
+	"zone-plate",
+	"gamut",
+	"chroma-zone-plate",
+	"solid-color",
+	"ball",
+	"smpte100",
+	"bar",
+	"pinwheel",
+	"spokes",
+	"gradient",
+	"colors",
+	"smpte-rp-219",
+]
 
 
 def resolve_local_ip() -> str:
@@ -52,6 +84,77 @@ def _is_gstreamer_element_available(element_name: str) -> bool:
 		return False
 
 
+def _configure_camera_v4l2(camera_id: int, fps: int, width: int, height: int) -> bool:
+	"""Configure V4L2 camera properties using v4l2-ctl."""
+	device = f"/dev/video{camera_id}"
+	
+	try:
+		# Set resolution
+		subprocess.run(
+			["v4l2-ctl", "-d", device, "-v", f"width={width},height={height}"],
+			capture_output=True,
+			timeout=2.0
+		)
+		# Set FPS
+		subprocess.run(
+			["v4l2-ctl", "-d", device, "-p", str(fps)],
+			capture_output=True,
+			timeout=2.0
+		)
+		return True
+	except Exception as e:
+		logger.warning(f"Failed to configure camera {camera_id} with v4l2-ctl: {e}")
+		return False
+
+
+def _videotestsrc_props_for_camera(camera_id: int) -> str:
+	pattern = VIDEOTEST_PATTERNS[camera_id % len(VIDEOTEST_PATTERNS)]
+	seed = camera_id + 1
+	foreground = 0xFF000000 | ((seed * 73) % 256) << 16 | ((seed * 151) % 256) << 8 | ((seed * 199) % 256)
+	background = 0xFF000000 | ((seed * 41) % 256) << 16 | ((seed * 97) % 256) << 8 | ((seed * 157) % 256)
+	motion = ["wavy", "sweep", "hsweep"][camera_id % 3]
+	horizontal_speed = ((camera_id % 5) + 1) * 2
+	animation_mode = ["frames", "wall-time", "running-time"][camera_id % 3]
+	return (
+		f'pattern={pattern} '
+		f'foreground-color={foreground} '
+		f'background-color={background} '
+		f'motion={motion} '
+		f'horizontal-speed={horizontal_speed} '
+		f'animation-mode={animation_mode}'
+	)
+
+
+def _build_encoder_pipeline(source_element: str, port: int, bitrate: int, target_fps: int, multicast_ip: str, grayscale: bool) -> str:
+	video_chain = [source_element, "videoconvert"]
+	if grayscale:
+		video_chain.extend(["videobalance saturation=0.0", "videoconvert"])
+	video_chain.extend([
+		"video/x-raw,format=I420",
+	])
+
+	if _is_gstreamer_element_available("v4l2h264enc"):
+		logger.info(f"[stream-{port}] Using hardware encoder v4l2h264enc")
+		encoder_chain = (
+			f'v4l2h264enc extra-controls="encode,video_bitrate={bitrate},video_gop_size={int(target_fps)}" ! '
+			"h264parse"
+		)
+	else:
+		logger.info(f"[stream-{port}] v4l2h264enc not found, falling back to software x264enc")
+		kbps = max(1, bitrate // 1000)
+		encoder_chain = (
+			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(target_fps)} ! '
+			"h264parse"
+		)
+
+	return (
+		" ! ".join(video_chain)
+		+ " ! "
+		+ encoder_chain
+		+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={multicast_ip} port={port} auto-multicast=true sync=false"
+	)
+
+
 class StreamerConfig:
 	def __init__(
 		self,
@@ -70,158 +173,86 @@ class StreamerConfig:
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
 		self.grayscale = grayscale
-		self.frame_width = CAMERA_FRAME_WIDTH
-		self.frame_height = CAMERA_FRAME_HEIGHT
 
 
-class CameraHandler:
+class StreamPipeline:
 	def __init__(self, config: StreamerConfig):
 		self.config = config
-		self.camera = None
+		self.pipeline = None
+		self.bus = None
 
-		# Initialize camera resources here (e.g., open video capture)
-		if not self.config.simulation:
-			self._configure_real_camera()
-		else:
-			logger.info(
-				f"[stream-{self.config.port}] Simulated camera {self.config.camera_id} initialized"
-			)
-
-	def _configure_real_camera(self):
-		self.camera = cv2.VideoCapture(self.config.camera_id, cv2.CAP_V4L2)  # init the camera explicitly with V4L2
-		self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
-		self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
-		self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-		self.camera.set(cv2.CAP_PROP_FPS, self.config.target_fps)
-		self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-		
-		# Allow the camera hardware to override the requested resolution
-		self.config.frame_width = int(self.camera.get(cv2.CAP_PROP_FRAME_WIDTH) or CAMERA_FRAME_WIDTH)
-		self.config.frame_height = int(self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT) or CAMERA_FRAME_HEIGHT)
-
-		logger.info(
-			f"[stream-{self.config.port}] Camera {self.config.camera_id} opened: {self.camera.isOpened()} at {self.config.frame_width}x{self.config.frame_height}"
-		)
-
-	def read_frame(self) -> tuple[bool, np.ndarray]:
+	def _build_pipeline(self) -> str:
 		if self.config.simulation:
-			return True, self._generate_simulated_frame(camera_id=self.config.camera_id)
-		else:
-			grabbed, frame = self._read_real_frame()
-			if grabbed and frame is not None and self.config.grayscale:
-				# Convert to grayscale, then back to BGR for 3-channel encoding compatibility
-				frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-				frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-			return grabbed, frame
-
-	def _generate_simulated_frame(
-		self, camera_id: int, width: int = 640, height: int = 640
-	) -> np.ndarray:
-		"""Generate a synthetic camera frame with current time on random color background."""
-
-		# Keep a stable deterministic color for each simulated camera.
-		rng = np.random.default_rng(seed=camera_id * 1007)
-		bg_color = tuple(rng.integers(0, 200, size=3).tolist())
-
-		# Create solid color background
-		frame = np.full((height, width, 3), bg_color, dtype=np.uint8)
-
-		# Add a deterministic checkerboard so texture is stable over time.
-		checker_size = 8
-		checker_color = (
-			min(255, bg_color[0] + 55),
-			min(255, bg_color[1] + 55),
-			min(255, bg_color[2] + 55),
-		)
-		for i in range(0, height, checker_size):
-			for j in range(0, width, checker_size):
-				if (i // checker_size + j // checker_size) % 2 == 0:
-					frame[i : i + checker_size, j : j + checker_size] = checker_color
-
-		TIMESTAMP_BOX_TOP_LEFT = (150, 300)
-		TIMESTAMP_BOX_BOTTOM_RIGHT = (490, 380)
-		TIMESTAMP_TEXT_ORIGIN = (180, 360)
-		TIMESTAMP_FONT_SCALE = 2.0
-		TIMESTAMP_THICKNESS = 3
-
-		# Add timestamp with dark background
-		timestamp = time.strftime("%H:%M:%S", time.localtime())
-		cv2.rectangle(
-			frame, TIMESTAMP_BOX_TOP_LEFT, TIMESTAMP_BOX_BOTTOM_RIGHT, (0, 0, 0), -1
-		)
-		cv2.putText(
-			frame,
-			timestamp,
-			TIMESTAMP_TEXT_ORIGIN,
-			cv2.FONT_HERSHEY_DUPLEX,
-			TIMESTAMP_FONT_SCALE,
-			(255, 255, 255),
-			TIMESTAMP_THICKNESS,
-		)
-
-		return frame
-
-	def _read_real_frame(self) -> tuple[bool, np.ndarray]:
-		return self.camera.read()
-
-	def release(self):
-		if self.camera is not None:
-			self.camera.release()
-
-
-class GStreamerHandler:
-	def __init__(self, config: StreamerConfig):
-		self.config = config
-		
-		if _is_gstreamer_element_available("v4l2h264enc"):
-			logger.info(f"[stream-{config.port}] Using hardware encoder v4l2h264enc")
-			# v4l2h264enc hardware encoding pipeline for Raspberry Pi 4
-			pipeline = (
-				f"appsrc ! videoconvert ! video/x-raw,format=I420 ! "
-				f"v4l2h264enc extra-controls=\"encode,video_bitrate={self.config.bitrate},video_gop_size={int(self.config.target_fps)}\" ! "
-				f"h264parse ! "
-				f"rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.port} auto-multicast=true sync=false"
+			source = (
+				"videotestsrc is-live=true "
+				+ _videotestsrc_props_for_camera(self.config.camera_id)
+				+ f" ! video/x-raw,width={CAMERA_FRAME_WIDTH},height={CAMERA_FRAME_HEIGHT},framerate={self.config.target_fps}/1"
 			)
 		else:
-			logger.info(f"[stream-{config.port}] v4l2h264enc not found, falling back to software x264enc")
-			# x264enc uses kilobits per second for its bitrate property
-			kbps = max(1, self.config.bitrate // 1000)
-			pipeline = (
-				f"appsrc ! videoconvert ! video/x-raw,format=I420 ! "
-				f"x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(self.config.target_fps)} ! "
-				f"h264parse ! "
-				f"rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.port} auto-multicast=true sync=false"
+			device = f"/dev/video{self.config.camera_id}"
+			_configure_camera_v4l2(
+				self.config.camera_id,
+				self.config.target_fps,
+				CAMERA_FRAME_WIDTH,
+				CAMERA_FRAME_HEIGHT,
 			)
-		
-		logger.info(f"[stream-{config.port}] Initializing VideoWriter targeting {self.config.multicast_ip}:{config.port}")
-		logger.info(f"[stream-{config.port}] Pipeline: {pipeline}")
-		
-		self.writer = cv2.VideoWriter(
-			pipeline,
-			cv2.CAP_GSTREAMER,
-			0,  # fourcc is strictly 0 when using gstreamer backend
-			float(self.config.target_fps),
-			(self.config.frame_width, self.config.frame_height),
-			True
+			source = f"v4l2src device={device}"
+
+		return _build_encoder_pipeline(
+			source,
+			self.config.port,
+			self.config.bitrate,
+			self.config.target_fps,
+			self.config.multicast_ip,
+			self.config.grayscale,
 		)
 
-		if not self.writer.isOpened():
-			logger.error(f"[stream-{config.port}] Failed to open GStreamer VideoWriter!")
+	def start(self):
+		pipeline_str = self._build_pipeline()
+		logger.info(f"[stream-{self.config.port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.port}")
+		logger.info(f"[stream-{self.config.port}] Pipeline: {pipeline_str}")
 
-	def send_frame(self, frame: np.ndarray) -> bool:
 		try:
-			self.writer.write(frame)
-			return True
+			self.pipeline = Gst.parse_launch(pipeline_str)
+			self.bus = self.pipeline.get_bus()
+			ret = self.pipeline.set_state(Gst.State.PLAYING)
+			if ret == Gst.StateChangeReturn.FAILURE:
+				raise RuntimeError("failed to set pipeline to PLAYING state")
+			logger.info(f"[stream-{self.config.port}] GStreamer pipeline initialized")
 		except Exception as e:
-			logger.error(f"[stream-{self.config.port}] GStreamer send error: {e}")
-			return False
+			logger.error(f"[stream-{self.config.port}] Failed to create GStreamer pipeline: {e}")
+			self.stop()
+			raise
 
-	def close(self):
+	def run_until_stopped(self, stop_event: multiprocessing.Event):
 		try:
-			if self.writer is not None:
-				self.writer.release()
-		except Exception as e:
-			logger.error(f"[stream-{self.config.port}] error closing writer: {e}")
+			while not stop_event.is_set():
+				if self.bus is not None:
+					message = self.bus.timed_pop_filtered(
+						100 * Gst.MSECOND,
+						Gst.MessageType.ERROR | Gst.MessageType.EOS,
+					)
+					if message is not None:
+						if message.type == Gst.MessageType.ERROR:
+							err, debug = message.parse_error()
+							logger.error(f"[stream-{self.config.port}] GStreamer error: {err.message}; debug={debug}")
+						else:
+							logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
+						stop_event.set()
+						break
+				time.sleep(0.1)
+		finally:
+			self.stop()
+
+	def stop(self):
+		if self.pipeline is not None:
+			try:
+				self.pipeline.set_state(Gst.State.NULL)
+			except Exception as e:
+				logger.error(f"[stream-{self.config.port}] error stopping pipeline: {e}")
+			finally:
+				self.pipeline = None
+				self.bus = None
 
 
 def handle_arguments():
@@ -303,53 +334,11 @@ class SingleStreamer:
 		self.config = config
 
 	def start(self, stop_event: multiprocessing.Event):
-		camera_handler = CameraHandler(self.config)
-		gstreamer_handler = GStreamerHandler(self.config)
-
-		frame_count = 0
-		frame_interval = 1.0 / self.config.target_fps
-
-		try:
-			failed_frame_count = 0
-			while not stop_event.is_set():
-				frame_start = time.time()
-
-				success, frame = camera_handler.read_frame()
-				if not success or frame is None:
-					logger.error(
-						f"[stream-{self.config.port}] failed to read frame (failure #{failed_frame_count + 1})"
-					)
-					# sleep 2^CAMERA_BACKOFF_BASE_SECONDS up to CAMERA_MAX_BACKOFF_SECONDS between failures to avoid tight failure loops
-					time.sleep(
-						clamp(
-							CAMERA_BACKOFF_BASE_SECONDS * (2**failed_frame_count),
-							0,
-							CAMERA_MAX_BACKOFF_SECONDS,
-						)
-					)
-					failed_frame_count += 1
-					continue
-				failed_frame_count = 0  # reset on success
-
-				success = gstreamer_handler.send_frame(frame)
-				if not success:
-					logger.error(f"[stream-{self.config.port}] failed to send frame via GStreamer")
-					continue
-				frame_count += 1
-
-				frame_end = time.time()
-				elapsed = frame_end - frame_start
-				sleep_time = frame_interval - elapsed
-				if sleep_time > 0:
-					time.sleep(sleep_time)
-
-		finally:
-			logger.info(
-				f"[stream-{self.config.port}] cleaning up camera and pipeline (frames sent: {frame_count})"
-			)
-
-			camera_handler.release()
-			gstreamer_handler.close()
+		stream_pipeline = StreamPipeline(self.config)
+		stream_pipeline.start()
+		logger.info(f"[stream-{self.config.port}] running GStreamer pipeline")
+		stream_pipeline.run_until_stopped(stop_event)
+		logger.info(f"[stream-{self.config.port}] cleaning up pipeline")
 
 
 class MultiStreamer:
