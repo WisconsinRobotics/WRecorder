@@ -126,13 +126,8 @@ def _videotestsrc_props_for_camera(camera_id: int) -> str:
 	)
 
 
-def _build_encoder_pipeline(source_element: str, port: int, bitrate: int, target_fps: int, multicast_ip: str, grayscale: bool) -> str:
-	video_chain = [source_element, "videoconvert"]
-	if grayscale:
-		video_chain.extend(["videobalance saturation=0.0", "videoconvert"])
-	video_chain.extend([
-		"video/x-raw,format=I420",
-	])
+def _build_encoder_pipeline(source_element: str, port: int, bitrate: int, target_fps: int, multicast_ip: str) -> str:
+	video_chain = [source_element, "videoconvert", "video/x-raw,format=I420"]
 
 	if _is_gstreamer_element_available("v4l2h264enc"):
 		logger.info(f"[stream-{port}] Using hardware encoder v4l2h264enc")
@@ -165,7 +160,6 @@ class StreamerConfig:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
-		grayscale: bool = False,
 	):
 		self.port = port
 		self.camera_id = camera_id
@@ -173,7 +167,6 @@ class StreamerConfig:
 		self.target_fps = target_fps
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
-		self.grayscale = grayscale
 
 
 class StreamPipeline:
@@ -205,7 +198,6 @@ class StreamPipeline:
 			self.config.bitrate,
 			self.config.target_fps,
 			self.config.multicast_ip,
-			self.config.grayscale,
 		)
 
 	def start(self) -> bool:
@@ -334,12 +326,6 @@ def handle_arguments():
 		help="Seconds between discovery announcements",
 	)
 	parser.add_argument(
-		"--grayscale",
-		type=str,
-		choices=["on", "off"],
-		help="Convert frames to grayscale to reduce bandwidth",
-	)
-	parser.add_argument(
 		"--never-give-up",
 		type=str,
 		choices=["on", "off"],
@@ -420,7 +406,6 @@ class MultiStreamer:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
-		grayscale: bool = False,
 		never_give_up: bool = False,
 	):
 		self.streamers = [
@@ -432,7 +417,6 @@ class MultiStreamer:
 					target_fps=target_fps,
 					multicast_ip=multicast_ip,
 					simulation=simulation,
-					grayscale=grayscale,
 				)
 			)
 			for idx, cam_id in enumerate(camera_ids)

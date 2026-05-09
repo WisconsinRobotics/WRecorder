@@ -24,7 +24,16 @@ Both scripts require [argument_defaults.json](argument_defaults.json) at runtime
 
 1. **Install system dependencies, create virtual environment, & install Python packages:**
 
+Choose one based on your setup:
+
 ```sh
+# For systems with display (GUI receiver with PyQt6)
+make setup-headed
+
+# For headless systems (no GUI packages)
+make setup-headless
+
+# Default (equivalent to setup-headed)
 make setup
 ```
 
@@ -33,7 +42,8 @@ If this isn't working, read through the `Makefile` to understand the steps and t
 ### Notes
 
 - The `Makefile` will detect your virtual environment (`.venv` or `env`) and use it automatically.
-- PyQt6 is now used for the receiver GUI instead of OpenCV's window management.
+- PyQt6 is used for the receiver GUI in headed mode; omit it in headless mode.
+- `headed_requirements.txt` includes PyQt6 and PyGObject for GUI; `headless_requirements.txt` contains minimal dependencies only.
 - Make sure you have an existing OpenCV build with GStreamer support. If you don't, consider building it separately or obtaining a prebuilt wheel.
 
 ## Quick start

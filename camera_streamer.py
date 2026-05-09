@@ -108,7 +108,6 @@ if __name__ == "__main__":
 	announce_discovery = args.announce_discovery.lower() == "on"
 	discovery_port = args.discovery_port
 	discovery_interval = args.discovery_interval
-	grayscale = args.grayscale.lower() == "on"
 	never_give_up = args.never_give_up.lower() == "on"
 
 	if simulate_cameras is not None:
@@ -139,7 +138,6 @@ if __name__ == "__main__":
 		target_fps,
 		MULTICAST_IP,
 		simulation=simulate_cameras is not None,
-		grayscale=grayscale,
 		never_give_up=never_give_up,
 	)
 	streamer.start()

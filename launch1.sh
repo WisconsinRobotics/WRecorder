@@ -27,5 +27,4 @@ export WRECORDER_STREAMER_IP="$READY_IP"
     --streamer-name cam-pi-1 \
     --auto-find-cameras on \
     --target-fps 30 \
-    --grayscale on \
     --never-give-up on

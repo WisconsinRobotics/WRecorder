@@ -12,7 +12,6 @@
     "streamer_name": "wrecorder-streamer",
     "announce_discovery": "on",
     "discovery_interval": 1.0,
-    "grayscale": "off",
     "never_give_up": "off"
   },
   "receiver-only": {
