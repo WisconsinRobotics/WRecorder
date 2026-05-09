@@ -1,7 +1,7 @@
 
 # WRecorder
 
-WRecorder provides multi-camera streaming between machines using OpenCV + GStreamer over UDP Multicast.
+WRecorder provides multi-camera streaming between machines using GStreamer over UDP Multicast.
 
 ## Active files
 
@@ -37,6 +37,12 @@ If this isn't working, read through the `Makefile` to understand the steps and t
 - Make sure you have an existing OpenCV build with GStreamer support. If you don't, consider building it separately or obtaining a prebuilt wheel.
 
 ## Quick start
+
+Make sure to run `make setup` first to install dependencies and set up the virtual environment. Then activate the virtual environment:
+
+```sh
+source .venv/bin/activate
+```
 
 Start streamer:
 

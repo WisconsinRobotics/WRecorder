@@ -109,6 +109,7 @@ if __name__ == "__main__":
 	discovery_port = args.discovery_port
 	discovery_interval = args.discovery_interval
 	grayscale = args.grayscale.lower() == "on"
+	never_give_up = args.never_give_up.lower() == "on"
 
 	if simulate_cameras is not None:
 		camera_ids = list(range(simulate_cameras))
@@ -131,7 +132,16 @@ if __name__ == "__main__":
 		)
 		exit(2)
 
-	streamer = MultiStreamer(base_port, camera_ids, bitrate, target_fps, MULTICAST_IP, simulation=simulate_cameras is not None, grayscale=grayscale)
+	streamer = MultiStreamer(
+		base_port,
+		camera_ids,
+		bitrate,
+		target_fps,
+		MULTICAST_IP,
+		simulation=simulate_cameras is not None,
+		grayscale=grayscale,
+		never_give_up=never_give_up,
+	)
 	streamer.start()
 
 	discovery_thread = None
@@ -156,12 +166,12 @@ if __name__ == "__main__":
 	install_stop_signal_handlers(streamer.stop_event.set, logger, "Stopping streams...")
 
 	try:
-		while not streamer.stop_event.is_set() and any(p.is_alive() for p in streamer.processes):
-			time.sleep(0.1)
+		streamer.supervise()
 	except KeyboardInterrupt:
 		logger.info("Keyboard interrupt received. Stopping streams...")
 		streamer.stop_event.set()
 	finally:
+		streamer.stop_event.set()
 		for p in streamer.processes:
 			p.join(timeout=1.0)
 			if p.is_alive():

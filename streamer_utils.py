@@ -5,6 +5,7 @@ import gi
 import argparse
 import subprocess
 import multiprocessing
+import queue as queue_module
 from typing import List
 
 gi.require_version('Gst', '1.0')
@@ -24,8 +25,8 @@ logger = get_logger(__name__)
 # Initialize GStreamer
 Gst.init(None)
 
-CAMERA_BACKOFF_BASE_SECONDS = 0.2
-CAMERA_MAX_BACKOFF_SECONDS = 10
+CAMERA_RESTART_BASE_SECONDS = 0.5
+CAMERA_RESTART_MAX_SECONDS = 10
 STARTUP_STAGGER_SECONDS = 1
 
 VIDEOTEST_PATTERNS = [
@@ -207,7 +208,7 @@ class StreamPipeline:
 			self.config.grayscale,
 		)
 
-	def start(self):
+	def start(self) -> bool:
 		pipeline_str = self._build_pipeline()
 		logger.info(f"[stream-{self.config.port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.port}")
 		logger.info(f"[stream-{self.config.port}] Pipeline: {pipeline_str}")
@@ -219,12 +220,13 @@ class StreamPipeline:
 			if ret == Gst.StateChangeReturn.FAILURE:
 				raise RuntimeError("failed to set pipeline to PLAYING state")
 			logger.info(f"[stream-{self.config.port}] GStreamer pipeline initialized")
+			return True
 		except Exception as e:
 			logger.error(f"[stream-{self.config.port}] Failed to create GStreamer pipeline: {e}")
 			self.stop()
-			raise
+			return False
 
-	def run_until_stopped(self, stop_event: multiprocessing.Event):
+	def run_until_stopped(self, stop_event: multiprocessing.Event) -> bool:
 		try:
 			while not stop_event.is_set():
 				if self.bus is not None:
@@ -238,9 +240,9 @@ class StreamPipeline:
 							logger.error(f"[stream-{self.config.port}] GStreamer error: {err.message}; debug={debug}")
 						else:
 							logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
-						stop_event.set()
 						break
 				time.sleep(0.1)
+			return stop_event.is_set()
 		finally:
 			self.stop()
 
@@ -253,6 +255,24 @@ class StreamPipeline:
 			finally:
 				self.pipeline = None
 				self.bus = None
+
+
+def _publish_stream_status(
+	status_queue: multiprocessing.Queue,
+	port: int,
+	state: str,
+	reason: str,
+):
+	try:
+		status_queue.put_nowait(
+			{
+				"port": port,
+				"state": state,
+				"reason": reason,
+			}
+		)
+	except Exception:
+		pass
 
 
 def handle_arguments():
@@ -319,6 +339,12 @@ def handle_arguments():
 		choices=["on", "off"],
 		help="Convert frames to grayscale to reduce bandwidth",
 	)
+	parser.add_argument(
+		"--never-give-up",
+		type=str,
+		choices=["on", "off"],
+		help="Keep restarting cameras even if all streams have failed",
+	)
 
 	try:
 		apply_required_external_defaults(parser, "streamer-only")
@@ -333,12 +359,56 @@ class SingleStreamer:
 	def __init__(self, config: StreamerConfig):
 		self.config = config
 
-	def start(self, stop_event: multiprocessing.Event):
-		stream_pipeline = StreamPipeline(self.config)
-		stream_pipeline.start()
-		logger.info(f"[stream-{self.config.port}] running GStreamer pipeline")
-		stream_pipeline.run_until_stopped(stop_event)
-		logger.info(f"[stream-{self.config.port}] cleaning up pipeline")
+	def start(self, stop_event: multiprocessing.Event, status_queue: multiprocessing.Queue):
+		restart_count = 0
+		while not stop_event.is_set():
+			stream_pipeline = StreamPipeline(self.config)
+			if not stream_pipeline.start():
+				_publish_stream_status(
+					status_queue,
+					self.config.port,
+					"failed",
+					"pipeline_start_failed",
+				)
+				restart_count += 1
+				delay = min(CAMERA_RESTART_BASE_SECONDS * (2 ** (restart_count - 1)), CAMERA_RESTART_MAX_SECONDS)
+				logger.warning(
+					f"[stream-{self.config.port}] pipeline failed to start; retrying in {delay:.1f}s (attempt #{restart_count})"
+				)
+				time.sleep(delay)
+				continue
+
+			_publish_stream_status(status_queue, self.config.port, "healthy", "pipeline_started")
+
+			logger.info(f"[stream-{self.config.port}] running GStreamer pipeline")
+			stopped_by_request = stream_pipeline.run_until_stopped(stop_event)
+			logger.info(f"[stream-{self.config.port}] cleaning up pipeline")
+			_publish_stream_status(
+				status_queue,
+				self.config.port,
+				"failed" if not stop_event.is_set() else "starting",
+				"pipeline_stopped" if not stop_event.is_set() else "shutdown_requested",
+			)
+
+			if stopped_by_request or stop_event.is_set():
+				break
+
+			restart_count += 1
+			delay = min(CAMERA_RESTART_BASE_SECONDS * (2 ** (restart_count - 1)), CAMERA_RESTART_MAX_SECONDS)
+			logger.warning(
+				f"[stream-{self.config.port}] pipeline stopped unexpectedly; restarting in {delay:.1f}s (attempt #{restart_count})"
+			)
+			time.sleep(delay)
+
+
+def _spawn_streamer_process(
+	streamer: "SingleStreamer",
+	stop_event: multiprocessing.Event,
+	status_queue: multiprocessing.Queue,
+) -> multiprocessing.Process:
+	p = multiprocessing.Process(target=streamer.start, args=(stop_event, status_queue), daemon=True)
+	p.start()
+	return p
 
 
 class MultiStreamer:
@@ -351,6 +421,7 @@ class MultiStreamer:
 		multicast_ip: str,
 		simulation: bool = False,
 		grayscale: bool = False,
+		never_give_up: bool = False,
 	):
 		self.streamers = [
 			SingleStreamer(
@@ -368,12 +439,14 @@ class MultiStreamer:
 		]
 
 		self.stop_event = multiprocessing.Event()
+		self.never_give_up = never_give_up
+		self.status_queue: multiprocessing.Queue = multiprocessing.Queue()
+		self.stream_health = {sub_streamer.config.port: "starting" for sub_streamer in self.streamers}
 		self.processes: List[multiprocessing.Process] = []
 
 	def start(self):
 		for sub_streamer in self.streamers:
-			p = multiprocessing.Process(target=sub_streamer.start, args=(self.stop_event,), daemon=True)
-			p.start()
+			p = _spawn_streamer_process(sub_streamer, self.stop_event, self.status_queue)
 			self.processes.append(p)
 
 			logger.info(
@@ -381,3 +454,58 @@ class MultiStreamer:
 			)
 
 			time.sleep(STARTUP_STAGGER_SECONDS)  # stagger camera startups to reduce contention
+
+	def supervise(self):
+		while not self.stop_event.is_set():
+			while True:
+				try:
+					status = self.status_queue.get_nowait()
+				except queue_module.Empty:
+					break
+				port = status.get("port")
+				if port in self.stream_health:
+					self.stream_health[port] = str(status.get("state", "failed"))
+					reason = status.get("reason", "unknown")
+					logger.info(f"[stream-{port}] status update: {self.stream_health[port]} ({reason})")
+
+			alive_count = sum(1 for p in self.processes if p.is_alive())
+			if alive_count == 0:
+				if self.never_give_up:
+					logger.warning("All camera processes stopped; restarting every stream...")
+					self.processes = [
+						_spawn_streamer_process(sub_streamer, self.stop_event, self.status_queue)
+						for sub_streamer in self.streamers
+					]
+					for sub_streamer in self.streamers:
+						self.stream_health[sub_streamer.config.port] = "starting"
+					for sub_streamer in self.streamers:
+						logger.info(
+							f"Attempting to restart camera {sub_streamer.config.camera_id} on port {sub_streamer.config.port}"
+						)
+					for _ in self.streamers:
+						time.sleep(STARTUP_STAGGER_SECONDS)
+					continue
+
+				logger.error("All camera processes stopped. Exiting streamer.")
+				self.stop_event.set()
+				break
+
+			for idx, p in enumerate(self.processes):
+				if p.is_alive():
+					continue
+
+				p.join(timeout=0)
+				sub_streamer = self.streamers[idx]
+				logger.warning(
+					f"[stream-{sub_streamer.config.port}] process exited unexpectedly (code={p.exitcode}); restarting"
+				)
+				self.stream_health[sub_streamer.config.port] = "starting"
+				self.processes[idx] = _spawn_streamer_process(sub_streamer, self.stop_event, self.status_queue)
+				time.sleep(STARTUP_STAGGER_SECONDS)
+
+			if not self.never_give_up and self.stream_health and all(state == "failed" for state in self.stream_health.values()):
+				logger.error("All cameras are failing. Exiting streamer.")
+				self.stop_event.set()
+				break
+
+			time.sleep(0.1)

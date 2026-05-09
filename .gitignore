@@ -11,3 +11,5 @@ ruff.toml
 temp.py
 
 .temp-venv
+
+notes.md
