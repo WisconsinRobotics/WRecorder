@@ -126,6 +126,39 @@ def _videotestsrc_props_for_camera(camera_id: int) -> str:
 	)
 
 
+def _h264_level_for_frame_rate(width: int, height: int, fps: int) -> str:
+	macroblocks_w = (width + 15) // 16
+	macroblocks_h = (height + 15) // 16
+	macroblocks_per_frame = macroblocks_w * macroblocks_h
+	macroblocks_per_second = macroblocks_per_frame * fps
+
+	level_limits = [
+		("1", 99, 1485),
+		("1b", 99, 1485),
+		("1.1", 396, 3000),
+		("1.2", 396, 6000),
+		("1.3", 396, 11880),
+		("2", 396, 11880),
+		("2.1", 792, 19800),
+		("2.2", 1620, 20250),
+		("3", 1620, 40500),
+		("3.1", 3600, 108000),
+		("3.2", 5120, 216000),
+		("4", 8192, 245760),
+		("4.1", 8192, 245760),
+		("4.2", 8704, 522240),
+	]
+
+	for level, max_macroblocks_per_frame, max_macroblocks_per_second in level_limits:
+		if (
+			macroblocks_per_frame <= max_macroblocks_per_frame
+			and macroblocks_per_second <= max_macroblocks_per_second
+		):
+			return level
+
+	return "4.2"
+
+
 def _build_encoder_pipeline(
 	source_element: str,
 	port: int,
@@ -133,15 +166,18 @@ def _build_encoder_pipeline(
 	target_fps: int,
 	multicast_ip: str,
 	force_software: bool = False,
+	output_width: int = CAMERA_FRAME_WIDTH,
+	output_height: int = CAMERA_FRAME_HEIGHT,
 ) -> str:
 	video_chain = [source_element, "videoconvert", "video/x-raw,format=I420"]
 
 	use_v4l2 = (not force_software) and _is_gstreamer_element_available("v4l2h264enc")
 	if use_v4l2:
 		logger.info(f"[stream-{port}] Using hardware encoder v4l2h264enc")
+		level = _h264_level_for_frame_rate(output_width, output_height, target_fps)
 		encoder_chain = (
 			f'v4l2h264enc extra-controls="encode,video_bitrate={bitrate},video_gop_size={int(target_fps)}" ! '
-			"h264parse"
+			f'h264parse ! video/x-h264,level=(string){level}'
 		)
 	else:
 		if force_software:
@@ -212,6 +248,8 @@ class StreamPipeline:
 			self.config.target_fps,
 			self.config.multicast_ip,
 			force_software=getattr(self.config, "force_software", False),
+			output_width=CAMERA_FRAME_WIDTH,
+			output_height=CAMERA_FRAME_HEIGHT,
 		)
 
 	def start(self) -> bool:
