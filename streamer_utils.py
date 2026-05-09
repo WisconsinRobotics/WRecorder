@@ -126,17 +126,28 @@ def _videotestsrc_props_for_camera(camera_id: int) -> str:
 	)
 
 
-def _build_encoder_pipeline(source_element: str, port: int, bitrate: int, target_fps: int, multicast_ip: str) -> str:
+def _build_encoder_pipeline(
+	source_element: str,
+	port: int,
+	bitrate: int,
+	target_fps: int,
+	multicast_ip: str,
+	force_software: bool = False,
+) -> str:
 	video_chain = [source_element, "videoconvert", "video/x-raw,format=I420"]
 
-	if _is_gstreamer_element_available("v4l2h264enc"):
+	use_v4l2 = (not force_software) and _is_gstreamer_element_available("v4l2h264enc")
+	if use_v4l2:
 		logger.info(f"[stream-{port}] Using hardware encoder v4l2h264enc")
 		encoder_chain = (
 			f'v4l2h264enc extra-controls="encode,video_bitrate={bitrate},video_gop_size={int(target_fps)}" ! '
 			"h264parse"
 		)
 	else:
-		logger.info(f"[stream-{port}] v4l2h264enc not found, falling back to software x264enc")
+		if force_software:
+			logger.info(f"[stream-{port}] Forcing software encoder x264enc (fallback)")
+		else:
+			logger.info(f"[stream-{port}] v4l2h264enc not found, falling back to software x264enc")
 		kbps = max(1, bitrate // 1000)
 		encoder_chain = (
 			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(target_fps)} ! '
@@ -160,6 +171,7 @@ class StreamerConfig:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
+		force_software: bool = False,
 	):
 		self.port = port
 		self.camera_id = camera_id
@@ -167,6 +179,7 @@ class StreamerConfig:
 		self.target_fps = target_fps
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
+		self.force_software = force_software
 
 
 class StreamPipeline:
@@ -198,6 +211,7 @@ class StreamPipeline:
 			self.config.bitrate,
 			self.config.target_fps,
 			self.config.multicast_ip,
+			force_software=getattr(self.config, "force_software", False),
 		)
 
 	def start(self) -> bool:
@@ -205,6 +219,7 @@ class StreamPipeline:
 		logger.info(f"[stream-{self.config.port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.port}")
 		logger.info(f"[stream-{self.config.port}] Pipeline: {pipeline_str}")
 
+		# Try to start pipeline; if starting fails and v4l2 was used, retry with software encoder
 		try:
 			self.pipeline = Gst.parse_launch(pipeline_str)
 			self.bus = self.pipeline.get_bus()
@@ -215,6 +230,22 @@ class StreamPipeline:
 			return True
 		except Exception as e:
 			logger.error(f"[stream-{self.config.port}] Failed to create GStreamer pipeline: {e}")
+			# If we haven't already forced software encoding, try that as a fallback
+			if not getattr(self.config, "force_software", False):
+				logger.info(f"[stream-{self.config.port}] Retrying with software encoder (fallback)")
+				setattr(self.config, "force_software", True)
+				try:
+					pipeline_str = self._build_pipeline()
+					self.pipeline = Gst.parse_launch(pipeline_str)
+					self.bus = self.pipeline.get_bus()
+					ret = self.pipeline.set_state(Gst.State.PLAYING)
+					if ret == Gst.StateChangeReturn.FAILURE:
+						raise RuntimeError("failed to set pipeline to PLAYING state (software)")
+					logger.info(f"[stream-{self.config.port}] GStreamer pipeline initialized (software encoder)")
+					return True
+				except Exception as e2:
+					logger.error(f"[stream-{self.config.port}] Fallback to software encoder failed: {e2}")
+			# give up
 			self.stop()
 			return False
 
@@ -230,9 +261,29 @@ class StreamPipeline:
 						if message.type == Gst.MessageType.ERROR:
 							err, debug = message.parse_error()
 							logger.error(f"[stream-{self.config.port}] GStreamer error: {err.message}; debug={debug}")
-						else:
-							logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
-						break
+							# If this looks like a v4l2 encoder frame handling failure, try runtime fallback to software encoder
+							err_text = (err.message or "").lower()
+							debug_text = (debug or "").lower()
+							if ("gst_v4l2_video_enc_handle_frame" in debug_text or "v4l2" in err_text or "v4l2" in debug_text) and not getattr(self.config, "force_software", False):
+								logger.info(f"[stream-{self.config.port}] Detected v4l2 encoder failure; attempting runtime fallback to software encoder")
+								# Attempt to restart with software encoder
+								self.stop()
+								setattr(self.config, "force_software", True)
+								try:
+									pipeline_str = self._build_pipeline()
+									logger.info(f"[stream-{self.config.port}] Restarting pipeline with software encoder: {pipeline_str}")
+									self.pipeline = Gst.parse_launch(pipeline_str)
+									self.bus = self.pipeline.get_bus()
+									ret = self.pipeline.set_state(Gst.State.PLAYING)
+									if ret == Gst.StateChangeReturn.FAILURE:
+										raise RuntimeError("failed to set pipeline to PLAYING state (runtime software)")
+									logger.info(f"[stream-{self.config.port}] Pipeline restarted with software encoder")
+								except Exception as e3:
+									logger.error(f"[stream-{self.config.port}] Runtime fallback failed: {e3}")
+									break
+							else:
+								logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
+								break
 				time.sleep(0.1)
 			return stop_event.is_set()
 		finally:
