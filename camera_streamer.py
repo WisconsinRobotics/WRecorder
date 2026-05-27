@@ -5,6 +5,15 @@ import socket
 import threading
 from typing import List
 import os
+try:
+	import rclpy
+	from rclpy.node import Node
+	from std_msgs.msg import String
+	HAVE_ROS2 = True
+except ImportError:
+	HAVE_ROS2 = False
+	Node = object # Just so class definition doesn't throw syntax error
+
 from common_utils import (
 	get_logger,
 	DISCOVERY_MESSAGE_TYPE,
@@ -29,6 +38,52 @@ WARN_EVERY_N_FAILURES = 25
 CAMERA_SCAN_START = 0
 CAMERA_SCAN_STOP = 8
 CAMERA_SCAN_STEP = 2
+
+class CameraCommandNode(Node):
+	def __init__(self, camera_ids):
+		super().__init__('camera_transmitter')
+		self.camera_ids = camera_ids
+
+		self.subscription = self.create_subscription(String, '/camera_commands', self.cmd_callback, 10)
+	
+	def cmd_callback(self, msg):
+		command = msg.data
+		if command.startswith("EXP:"):
+			exp_val_str = command.split(":")[1]
+			if exp_val_str == "AUTO":
+				self.get_logger().info("Setting exposure to AUTO")
+				for cam_id in self.camera_ids:
+					os.system(f"v4l2-ctl -d /dev/video{cam_id} -c auto_exposure=3")
+			else:
+				try:
+					exposure_val = int(exp_val_str)
+					self.get_logger().info(f"Setting exposure to {exposure_val}")
+
+					for cam_id in self.camera_ids:
+						os.system(f"v4412-ctl -d /dev/video{cam_id} -c auto_exposure=1")
+						os.system(f"v4l2-ctl -d /dev/video{cam_id} -c exposure_time_absolute={exposure_val}")
+				except ValueError:
+					self.get_logger().info("Obtained value error make sure correct exposure value was passed in")
+	
+def ros2_command_thread(camera_ids, stop_event):
+	if not HAVE_ROS2:
+		logger.warning("ROS2 (rclpy) could not be imported. Commands will be disabled.")
+		return
+	try:
+		rclpy.init(args=None)
+		node = CameraCommandNode(camera_ids)
+		while not stop_event.is_set():
+			rclpy.spin_once(node, timeout_sec=0.5)
+	except Exception as e:
+		logger.error(f"ROS2 node exception: {e}")
+	finally:
+		if HAVE_ROS2 and rclpy.ok():
+			try:
+				node.destroy_node()
+				rclpy.shutdown()
+			except Exception:
+				pass
+
 
 def announce_stream_config(
 	stop_event: multiprocessing.Event,
@@ -161,6 +216,13 @@ if __name__ == "__main__":
 		)
 		discovery_thread.start()
 
+	ros2_thread = threading.Thread(
+		target=ros2_command_thread,
+		args=(camera_ids, streamer.stop_event),
+		daemon=True
+	)
+	ros2_thread.start()
+
 	install_stop_signal_handlers(streamer.stop_event.set, logger, "Stopping streams...")
 
 	try:
@@ -179,5 +241,7 @@ if __name__ == "__main__":
 
 	if discovery_thread is not None:
 		discovery_thread.join(timeout=1)
+
+	ros2_thread.join(timeout=1)
 
 	logger.info("All streams stopped")
