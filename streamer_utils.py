@@ -201,7 +201,7 @@ def _build_encoder_pipeline(
 		+ f" ! {LOW_LATENCY_QUEUE} ! "
 		+ encoder_chain
 		+ ("" if simulate_loss <= 0.0 else f" ! identity drop-probability={simulate_loss / 100.0} ")
-		+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={multicast_ip} port={port} auto-multicast=true sync=false async=false"
+		+ f" ! rtph264pay config-interval=1 pt=96 ! multiudpsink name=msink sync=false async=false"
 	)
 
 
@@ -217,6 +217,7 @@ class StreamerConfig:
 		simulate_loss: float = 0.0,
 		output_width: int = CAMERA_FRAME_WIDTH,
 		output_height: int = CAMERA_FRAME_HEIGHT,
+		control_queue: multiprocessing.Queue = None,
 	):
 		self.port = port
 		self.camera_id = camera_id
@@ -227,6 +228,7 @@ class StreamerConfig:
 		self.simulate_loss = simulate_loss
 		self.output_width = output_width
 		self.output_height = output_height
+		self.control_queue = control_queue
 
 
 class MosaicConfig:
@@ -239,6 +241,7 @@ class MosaicConfig:
 		multicast_ip: str,
 		simulation: bool = False,
 		simulate_loss: float = 0.0,
+		control_queue: multiprocessing.Queue = None,
 	):
 		self.output_port = output_port
 		self.camera_ids = camera_ids
@@ -247,6 +250,7 @@ class MosaicConfig:
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
 		self.simulate_loss = simulate_loss
+		self.control_queue = control_queue
 
 
 class MosaicPipeline:
@@ -303,13 +307,13 @@ class MosaicPipeline:
 			f"{mosaic_source} {compositor} ! videoconvert ! video/x-raw,format=I420,width={output_width},height={output_height} ! {LOW_LATENCY_QUEUE} ! "
 			+ encoder_chain
 			+ ("" if self.config.simulate_loss <= 0.0 else f" ! identity drop-probability={self.config.simulate_loss / 100.0} ")
-			+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.output_port} auto-multicast=true sync=false async=false"
+			+ f" ! rtph264pay config-interval=1 pt=96 ! multiudpsink name=msink sync=false async=false"
 		)
 
 	def start(self) -> bool:
 		pipeline_str = self._build_pipeline()
 		logger.info(
-			f"[mosaic-{self.config.output_port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.output_port}"
+			f"[mosaic-{self.config.output_port}] Initializing GStreamer pipeline for unicast clients"
 		)
 		logger.info(f"[mosaic-{self.config.output_port}] Pipeline: {pipeline_str}")
 
@@ -326,9 +330,25 @@ class MosaicPipeline:
 			self.stop()
 			return False
 
+	def add_client(self, ip: str, port: int):
+		if self.pipeline:
+			msink = self.pipeline.get_by_name("msink")
+			if msink:
+				msink.emit("add", ip, port)
+				logger.info(f"[mosaic-{self.config.output_port}] Added unicast client {ip}:{port}")
+
 	def run_until_stopped(self, stop_event: multiprocessing.Event) -> bool:
+		import queue as queue_module
 		try:
 			while not stop_event.is_set():
+				if self.config.control_queue:
+					try:
+						msg = self.config.control_queue.get_nowait()
+						if msg.get("type") == "add_client":
+							self.add_client(msg["ip"], msg["port"])
+					except queue_module.Empty:
+						pass
+
 				if self.bus is not None:
 					message = self.bus.timed_pop_filtered(
 						100 * Gst.MSECOND,
@@ -340,7 +360,8 @@ class MosaicPipeline:
 							logger.error(f"[mosaic-{self.config.output_port}] GStreamer error: {err.message}; debug={debug}")
 							logger.info(f"[mosaic-{self.config.output_port}] GStreamer EOS received")
 							break
-				time.sleep(0.1)
+				else:
+					time.sleep(0.1)
 			return stop_event.is_set()
 		finally:
 			self.stop()
@@ -436,7 +457,7 @@ class StreamPipeline:
 
 	def start(self) -> bool:
 		pipeline_str = self._build_pipeline()
-		logger.info(f"[stream-{self.config.port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.port}")
+		logger.info(f"[stream-{self.config.port}] Initializing GStreamer pipeline for unicast clients")
 		logger.info(f"[stream-{self.config.port}] Pipeline: {pipeline_str}")
 
 		# Try to start pipeline; if starting fails and v4l2 was used, retry with software encoder
@@ -454,9 +475,25 @@ class StreamPipeline:
 			self.stop()
 			return False
 
+	def add_client(self, ip: str, port: int):
+		if self.pipeline:
+			msink = self.pipeline.get_by_name("msink")
+			if msink:
+				msink.emit("add", ip, port)
+				logger.info(f"[stream-{self.config.port}] Added unicast client {ip}:{port}")
+
 	def run_until_stopped(self, stop_event: multiprocessing.Event) -> bool:
+		import queue as queue_module
 		try:
 			while not stop_event.is_set():
+				if self.config.control_queue:
+					try:
+						msg = self.config.control_queue.get_nowait()
+						if msg.get("type") == "add_client":
+							self.add_client(msg["ip"], msg["port"])
+					except queue_module.Empty:
+						pass
+
 				if self.bus is not None:
 					message = self.bus.timed_pop_filtered(
 						100 * Gst.MSECOND,
@@ -468,7 +505,8 @@ class StreamPipeline:
 							logger.error(f"[stream-{self.config.port}] GStreamer error: {err.message}; debug={debug}")
 							logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
 							break
-				time.sleep(0.1)
+				else:
+					time.sleep(0.1)
 			return stop_event.is_set()
 		finally:
 			self.stop()
@@ -559,6 +597,11 @@ def handle_arguments():
 		"--discovery-port",
 		type=int_in_range("discovery-port", VALID_PORT_MIN, VALID_PORT_MAX),
 		help="UDP port used for discovery announcements",
+	)
+	parser.add_argument(
+		"--control-port",
+		type=int_in_range("control-port", VALID_PORT_MIN, VALID_PORT_MAX),
+		help="UDP port used to listen for subscriber requests",
 	)
 	parser.add_argument(
 		"--discovery-interval",
@@ -654,6 +697,7 @@ class MultiStreamer:
 		simulation: bool = False,
 		simulate_loss: float = 0.0,
 		never_give_up: bool = False,
+		control_queues: dict = None,
 	):
 		self.streamers = [
 			SingleStreamer(
@@ -667,6 +711,7 @@ class MultiStreamer:
 					simulate_loss=simulate_loss,
 					output_width=320 if len(camera_ids) > 1 else CAMERA_FRAME_WIDTH,
 					output_height=320 if len(camera_ids) > 1 else CAMERA_FRAME_HEIGHT,
+					control_queue=control_queues.get(base_port + idx) if control_queues else None,
 				)
 			)
 			for idx, cam_id in enumerate(camera_ids)

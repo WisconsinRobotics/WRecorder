@@ -87,6 +87,34 @@ def ros2_command_thread(camera_ids, stop_event):
 				pass
 
 
+def run_udp_control_server(control_port: int, control_queues: dict):
+	"""Listens for UDP control messages from receivers (e.g., subscription requests) and routes to queues."""
+	server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	try:
+		server_socket.bind(("0.0.0.0", control_port))
+		server_socket.settimeout(1.0)
+		logger.info(f"UDP Control Server listening on port {control_port}")
+		while True:
+			try:
+				data, addr = server_socket.recvfrom(2048)
+				try:
+					payload = json.loads(data.decode("utf-8"))
+					if payload.get("type") == "SUBSCRIBE_REQUEST":
+						receiver_ip = payload.get("receiver_ip")
+						ports = payload.get("ports", [])
+						for port in ports:
+							if port in control_queues:
+								control_queues[port].put({"type": "add_client", "ip": receiver_ip, "port": port})
+				except json.JSONDecodeError:
+					pass
+			except socket.timeout:
+				continue
+	except Exception as e:
+		logger.error(f"UDP Control Server error: {e}")
+	finally:
+		server_socket.close()
+
+
 def announce_stream_config(
 	stop_event: multiprocessing.Event,
 	streamer_name: str,
@@ -197,6 +225,14 @@ if __name__ == "__main__":
 			f"would exceed {VALID_PORT_MAX} (max={max_port})."
 		)
 		exit(2)
+		
+	control_queues = {port: multiprocessing.Queue() for port in range(base_port, max_port + 1)}
+	control_server = threading.Thread(
+		target=run_udp_control_server,
+		args=(args.control_port, control_queues),
+		daemon=True
+	)
+	control_server.start()
 
 	streamer_stop_event = None
 	stream_processes = []
@@ -214,6 +250,7 @@ if __name__ == "__main__":
 				multicast_ip=MULTICAST_IP,
 				simulation=simulate_cameras is not None,
 				simulate_loss=simulate_loss,
+				control_queue=control_queues[base_port],
 			),
 		)
 		stream_process = multiprocessing.Process(
@@ -237,6 +274,7 @@ if __name__ == "__main__":
 			simulation=simulate_cameras is not None,
 			simulate_loss=simulate_loss,
 			never_give_up=never_give_up,
+			control_queues=control_queues,
 		)
 		streamer.start()
 		streamer_stop_event = streamer.stop_event

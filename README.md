@@ -1,7 +1,7 @@
 
 # WRecorder
 
-WRecorder provides multi-camera streaming between machines using GStreamer over UDP Multicast.
+WRecorder provides multi-camera streaming between machines using GStreamer over UDP: a broadcast discovery channel for zero-config discovery, and unicast streaming (via `multiudpsink`) for efficient per-receiver delivery.
 
 ## Active files
 
@@ -87,6 +87,8 @@ By default, receiver uses `auto-config=on` to auto-discover available streamers 
 
 Discovery packets now include `stream_count` as the number of camera streams represented by the advertisement and `mosaic` as an explicit layout hint for single-window versus mosaic rendering.
 
+| `--control-port` | UDP control port for subscription requests (receivers send `SUBSCRIBE_REQUEST` here) | `5551` | `1-65535` |
+
 ## Camera receiver arguments
 
 | Argument | Description | Default | Expected Input |
@@ -99,6 +101,13 @@ Discovery packets now include `stream_count` as the number of camera streams rep
 | `--streamer-name-filter` | Accept only matching streamer name from discovery | `null` (no filter) | String or `null` |
 | `--discovery-port` | UDP discovery port | `5550` | `1-65535` |
 | `--discovery-timeout` | Discovery phase timeout override | `null` (auto budget) | Seconds (float) or `null` |
+
+Notes on discovery & subscription:
+
+- The receiver listens for discovery broadcasts (default port `5550`). When a desired streamer is discovered, the receiver opens local unicast `udpsrc` listeners on the requested port(s) and sends a JSON `SUBSCRIBE_REQUEST` to the streamer's `--control-port` (default `5551`) advertising its reachable IP and the ports it will listen on.
+- The streamer runs a lightweight UDP control server that accepts `SUBSCRIBE_REQUEST` messages and dynamically adds the receiver as a unicast target using GStreamer's `multiudpsink.emit("add", ip, port)` so streams are sent directly to subscribing receivers.
+
+This hybrid approach keeps discovery simple (broadcast) while avoiding multicast penalties on WiFi by delivering actual video over unicast to each subscriber.
 
 ## How to connect to different networks on the Pi
 

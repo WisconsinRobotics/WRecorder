@@ -4,7 +4,6 @@ from common_utils import (
 	install_stop_signal_handlers,
 	parse_discovery_payload,
 	clamp,
-	MULTICAST_IP,
 )
 
 import socket
@@ -92,6 +91,7 @@ if __name__ == "__main__":
 				"No matching discovery packet found. Falling back to manual args."
 			)
 
+	control_port = args.control_port
 	ports = build_sequential_ports(base_port, stream_count)
 	if ports is None:
 		logger.error(
@@ -99,9 +99,33 @@ if __name__ == "__main__":
 		)
 		exit(2)
 
+	if auto_config and discovered is not None:
+		# Send subscription request to the streamer so it starts sending unicast
+		from streamer_utils import resolve_local_ip
+		import json
+		
+		# Resolve the IP that routes to the streamer
+		try:
+			# Use a dummy socket connection to figure out the local IP that routes to streamer
+			s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			s.connect((discovered["streamer_ip"], control_port))
+			local_ip = s.getsockname()[0]
+			s.close()
+			
+			request = {
+				"type": "SUBSCRIBE_REQUEST",
+				"receiver_ip": local_ip,
+				"ports": ports
+			}
+			s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+			s.sendto(json.dumps(request).encode('utf8'), (discovered["streamer_ip"], control_port))
+			s.close()
+			logger.info(f"Sent SUBSCRIBE_REQUEST to {discovered['streamer_ip']}:{control_port} for ports {ports}")
+		except Exception as e:
+			logger.error(f"Failed to send subscribe request: {e}")
+
 	logger.info(
-		f"Receiver config: multicast_ip={MULTICAST_IP}, base_port={base_port}, "
-		f"count={stream_count}, timeout={connection_timeout:.1f}s"
+		f"Receiver config: unicast_ports={ports}, timeout={connection_timeout:.1f}s"
 	)
 
 	receiver = MultiReceiver(ports, connection_timeout, window_prefix)

@@ -2,7 +2,6 @@ import argparse
 from common_utils import (
 	apply_required_external_defaults,
 	get_logger,
-	MULTICAST_IP,
 	CAMERA_FRAME_WIDTH,
 	CAMERA_FRAME_HEIGHT,
 )
@@ -77,6 +76,9 @@ def handle_arguments():
 		"--discovery-port", type=int, help="UDP port used for discovery announcements"
 	)
 	parser.add_argument(
+		"--control-port", type=int, help="UDP port used for subscribing to unicast streams"
+	)
+	parser.add_argument(
 		"--discovery-timeout",
 		type=float,
 		help="Optional override for discovery phase timeout in seconds",
@@ -133,12 +135,12 @@ class SingleReceiver:
 
 	def start(self):
 		pipeline_str = (
-			f"udpsrc multicast-group={MULTICAST_IP} port={self.port} auto-multicast=true ! "
+			f"udpsrc port={self.port} buffer-size=2097152 ! "
 			"application/x-rtp,media=video,clock-rate=90000,payload=96,encoding-name=H264 ! "
 			"rtpjitterbuffer latency=100 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! appsink name=appsink emit-signals=true max-buffers=5 drop=true sync=false"
 		)
 		window_name = f"{self.window_prefix}-{self.port}"
-		logger.info(f"[{window_name}] Attempting to connect to multicast {MULTICAST_IP}:{self.port}...")
+		logger.info(f"[{window_name}] Attempting to listen on UDP port {self.port} (unicast)...")
 		logger.info(f"[{window_name}] Pipeline: {pipeline_str}")
 
 		try:
@@ -174,12 +176,12 @@ class SingleReceiver:
 
 		# Wait for first frame (set by callback)
 		if not self._first_frame_event.wait(timeout=connection_timeout):
-			logger.error(f"Failed to connect to {MULTICAST_IP}:{self.port} (timeout after {connection_timeout}s)")
+			logger.error(f"Failed to receive stream on port {self.port} (timeout after {connection_timeout}s)")
 			# ensure cleanup
 			self.stop()
 			return
 
-		logger.info(f"Connected to {MULTICAST_IP}:{self.port} -> window '{window_name}'")
+		logger.info(f"Receiving stream on port {self.port} -> window '{window_name}'")
 
 		# Keep thread alive until stop is requested
 		try:
