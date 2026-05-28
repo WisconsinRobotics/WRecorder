@@ -51,7 +51,7 @@ def discover_stream_config(
 
 			logger.info(
 				f"Discovered '{discovered['streamer_name']}' at {discovered['streamer_ip']} "
-				f"(base_port={discovered['base_port']}, streams={discovered['stream_count']})"
+				f"(base_port={discovered['base_port']}, streams={discovered['stream_count']}, mosaic={discovered.get('mosaic', False)})"
 			)
 			return discovered
 	finally:

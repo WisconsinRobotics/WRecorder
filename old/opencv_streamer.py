@@ -18,7 +18,6 @@ DISCOVERY_IP = ipaddress.IPv4Network(
 	f"{BROADCAST_IP}/{SUBNET_MASK}", strict=False
 ).broadcast_address.exploded
 
-
 def broadcast_ip(discovery_port, discovery_timeout):
 	broadcast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 	broadcast_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)

@@ -3,7 +3,6 @@ import json
 import os
 import signal
 from typing import Any, Callable, Dict, Iterable, List, Optional
-import time
 import logging
 
 
@@ -109,6 +108,7 @@ def parse_discovery_payload(
 	streamer_ip = str(payload.get("streamer_ip", "")).strip()
 	base_port = payload.get("base_port")
 	stream_count = payload.get("stream_count")
+	mosaic = payload.get("mosaic", False)
 
 	if streamer_name_filter and streamer_name != streamer_name_filter:
 		return None
@@ -121,12 +121,15 @@ def parse_discovery_payload(
 
 	if not isinstance(stream_count, int) or stream_count < 1:
 		return None
+	if not isinstance(mosaic, bool):
+		return None
 
 	return {
 		"streamer_name": streamer_name,
 		"streamer_ip": streamer_ip,
 		"base_port": base_port,
 		"stream_count": stream_count,
+		"mosaic": mosaic,
 	}
 
 

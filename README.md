@@ -44,6 +44,7 @@ If this isn't working, read through the `Makefile` to understand the steps and t
 - The `Makefile` will detect your virtual environment (`.venv` or `env`) and use it automatically.
 - PyQt6 is used for the receiver GUI in headed mode; omit it in headless mode.
 - `headed_requirements.txt` includes PyQt6 and PyGObject for GUI; `headless_requirements.txt` contains minimal dependencies only.
+- `--mosaic` is available on the streamer for a single combined view and is off by default.
 - Make sure you have an existing OpenCV build with GStreamer support. If you don't, consider building it separately or obtaining a prebuilt wheel.
 
 ## Quick start
@@ -82,6 +83,8 @@ By default, receiver uses `auto-config=on` to auto-discover available streamers 
 | `--announce-discovery` | Broadcast discovery metadata (streamer name + port range) | `on` | `on\|off` |
 | `--discovery-port` | UDP discovery port | `5550` | `1-65535` |
 | `--discovery-interval` | Seconds between discovery packets | `1.0` | Seconds (float) |
+
+Discovery packets now include `stream_count` as the number of camera streams represented by the advertisement and `mosaic` as an explicit layout hint for single-window versus mosaic rendering.
 
 ## Camera receiver arguments
 

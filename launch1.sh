@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# temp exit early code for debugging
+# exit 1
+
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$SCRIPT_DIR/env/bin/python3}"
 
@@ -27,4 +30,6 @@ export WRECORDER_STREAMER_IP="$READY_IP"
     --streamer-name cam-pi-1 \
     --auto-find-cameras on \
     --target-fps 30 \
-    --never-give-up on
+    --never-give-up on \
+    --mosaic on
+

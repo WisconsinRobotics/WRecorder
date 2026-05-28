@@ -28,6 +28,9 @@ Gst.init(None)
 CAMERA_RESTART_BASE_SECONDS = 0.5
 CAMERA_RESTART_MAX_SECONDS = 10
 STARTUP_STAGGER_SECONDS = 1
+MOSAIC_TILE_WIDTH = 320
+MOSAIC_TILE_HEIGHT = 320
+LOW_LATENCY_QUEUE = "queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0"
 
 VIDEOTEST_PATTERNS = [
 	"smpte",
@@ -159,42 +162,43 @@ def _h264_level_for_frame_rate(width: int, height: int, fps: int) -> str:
 	return "4.2"
 
 
+def _mosaic_grid_for_camera_count(camera_count: int) -> tuple[int, int]:
+	if camera_count <= 1:
+		return 1, 1
+	columns = int(camera_count**0.5)
+	if columns * columns < camera_count:
+		columns += 1
+	rows = (camera_count + columns - 1) // columns
+	return columns, rows
+
+
 def _build_encoder_pipeline(
 	source_element: str,
 	port: int,
 	bitrate: int,
 	target_fps: int,
 	multicast_ip: str,
-	force_software: bool = False,
 	output_width: int = CAMERA_FRAME_WIDTH,
 	output_height: int = CAMERA_FRAME_HEIGHT,
 ) -> str:
-	video_chain = [source_element, "videoconvert", "video/x-raw,format=I420"]
-
-	use_v4l2 = (not force_software) and _is_gstreamer_element_available("v4l2h264enc")
-	if use_v4l2:
-		logger.info(f"[stream-{port}] Using hardware encoder v4l2h264enc")
-		level = _h264_level_for_frame_rate(output_width, output_height, target_fps)
-		encoder_chain = (
-			f'v4l2h264enc extra-controls="encode,video_bitrate={bitrate},video_gop_size={int(target_fps)}" ! '
-			f'h264parse ! video/x-h264,level=(string){level}'
-		)
-	else:
-		if force_software:
-			logger.info(f"[stream-{port}] Forcing software encoder x264enc (fallback)")
-		else:
-			logger.info(f"[stream-{port}] v4l2h264enc not found, falling back to software x264enc")
-		kbps = max(1, bitrate // 1000)
-		encoder_chain = (
-			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(target_fps)} ! '
-			"h264parse"
-		)
+	video_chain = [
+		source_element,
+		"videoconvert",
+		"videoscale",
+		f"video/x-raw,width={output_width},height={output_height},format=I420",
+	]
+	logger.info(f"[stream-{port}] Using software encoder x264enc")
+	kbps = max(1, bitrate // 1000)
+	encoder_chain = (
+		f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(target_fps)} bframes=0 ! '
+		"h264parse"
+	)
 
 	return (
 		" ! ".join(video_chain)
-		+ " ! "
+		+ f" ! {LOW_LATENCY_QUEUE} ! "
 		+ encoder_chain
-		+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={multicast_ip} port={port} auto-multicast=true sync=false"
+		+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={multicast_ip} port={port} auto-multicast=true sync=false async=false"
 	)
 
 
@@ -207,7 +211,8 @@ class StreamerConfig:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
-		force_software: bool = False,
+		output_width: int = CAMERA_FRAME_WIDTH,
+		output_height: int = CAMERA_FRAME_HEIGHT,
 	):
 		self.port = port
 		self.camera_id = camera_id
@@ -215,7 +220,177 @@ class StreamerConfig:
 		self.target_fps = target_fps
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
-		self.force_software = force_software
+		self.output_width = output_width
+		self.output_height = output_height
+
+
+class MosaicConfig:
+	def __init__(
+		self,
+		output_port: int,
+		camera_ids: List[int],
+		bitrate: int,
+		target_fps: int,
+		multicast_ip: str,
+		simulation: bool = False,
+	):
+		self.output_port = output_port
+		self.camera_ids = camera_ids
+		self.bitrate = bitrate
+		self.target_fps = target_fps
+		self.multicast_ip = multicast_ip
+		self.simulation = simulation
+
+
+class MosaicPipeline:
+	def __init__(self, config: MosaicConfig):
+		self.config = config
+		self.pipeline = None
+		self.bus = None
+
+	def _build_pipeline(self) -> str:
+		columns, rows = _mosaic_grid_for_camera_count(len(self.config.camera_ids))
+		output_width = columns * MOSAIC_TILE_WIDTH
+		output_height = rows * MOSAIC_TILE_HEIGHT
+
+		compositor_props = ["name=mosaic", "background=black"]
+		branch_parts = []
+
+		for index, camera_id in enumerate(self.config.camera_ids):
+			column = index % columns
+			row = index // columns
+			xpos = column * MOSAIC_TILE_WIDTH
+			ypos = row * MOSAIC_TILE_HEIGHT
+			if self.config.simulation:
+				source = (
+					"videotestsrc is-live=true "
+					+ _videotestsrc_props_for_camera(camera_id)
+					+ f" ! video/x-raw,width={CAMERA_FRAME_WIDTH},height={CAMERA_FRAME_HEIGHT},framerate={self.config.target_fps}/1"
+				)
+			else:
+				device = f"/dev/video{camera_id}"
+				_configure_camera_v4l2(
+					camera_id,
+					self.config.target_fps,
+					CAMERA_FRAME_WIDTH,
+					CAMERA_FRAME_HEIGHT,
+				)
+				source = f"v4l2src device={device}"
+
+			branch_parts.append(
+				f"{source} ! {LOW_LATENCY_QUEUE} ! videoconvert ! videoscale ! video/x-raw,width={MOSAIC_TILE_WIDTH},height={MOSAIC_TILE_HEIGHT} ! mosaic.sink_{index}"
+			)
+			compositor_props.append(f"sink_{index}::xpos={xpos}")
+			compositor_props.append(f"sink_{index}::ypos={ypos}")
+
+		compositor = "compositor " + " ".join(compositor_props)
+		mosaic_source = " ".join(branch_parts)
+		logger.info(f"[mosaic-{self.config.output_port}] Using software encoder x264enc")
+		kbps = max(1, self.config.bitrate // 1000)
+		encoder_chain = (
+			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(self.config.target_fps)} bframes=0 ! '
+			"h264parse"
+		)
+
+		return (
+			f"{mosaic_source} {compositor} ! videoconvert ! video/x-raw,format=I420,width={output_width},height={output_height} ! {LOW_LATENCY_QUEUE} ! "
+			+ encoder_chain
+			+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.output_port} auto-multicast=true sync=false async=false"
+		)
+
+	def start(self) -> bool:
+		pipeline_str = self._build_pipeline()
+		logger.info(
+			f"[mosaic-{self.config.output_port}] Initializing GStreamer pipeline for {self.config.multicast_ip}:{self.config.output_port}"
+		)
+		logger.info(f"[mosaic-{self.config.output_port}] Pipeline: {pipeline_str}")
+
+		try:
+			self.pipeline = Gst.parse_launch(pipeline_str)
+			self.bus = self.pipeline.get_bus()
+			ret = self.pipeline.set_state(Gst.State.PLAYING)
+			if ret == Gst.StateChangeReturn.FAILURE:
+				raise RuntimeError("failed to set pipeline to PLAYING state")
+			logger.info(f"[mosaic-{self.config.output_port}] GStreamer pipeline initialized")
+			return True
+		except Exception as e:
+			logger.error(f"[mosaic-{self.config.output_port}] Failed to create GStreamer pipeline: {e}")
+			self.stop()
+			return False
+
+	def run_until_stopped(self, stop_event: multiprocessing.Event) -> bool:
+		try:
+			while not stop_event.is_set():
+				if self.bus is not None:
+					message = self.bus.timed_pop_filtered(
+						100 * Gst.MSECOND,
+						Gst.MessageType.ERROR | Gst.MessageType.EOS,
+					)
+					if message is not None:
+						if message.type == Gst.MessageType.ERROR:
+							err, debug = message.parse_error()
+							logger.error(f"[mosaic-{self.config.output_port}] GStreamer error: {err.message}; debug={debug}")
+							logger.info(f"[mosaic-{self.config.output_port}] GStreamer EOS received")
+							break
+				time.sleep(0.1)
+			return stop_event.is_set()
+		finally:
+			self.stop()
+
+	def stop(self):
+		if self.pipeline is not None:
+			try:
+				self.pipeline.set_state(Gst.State.NULL)
+			except Exception as e:
+				logger.error(f"[mosaic-{self.config.output_port}] error stopping pipeline: {e}")
+			finally:
+				self.pipeline = None
+				self.bus = None
+
+
+class MosaicStreamer:
+	def __init__(self, config: MosaicConfig):
+		self.config = config
+
+	def start(self, stop_event: multiprocessing.Event, status_queue: multiprocessing.Queue):
+		restart_count = 0
+		while not stop_event.is_set():
+			stream_pipeline = MosaicPipeline(self.config)
+			if not stream_pipeline.start():
+				_publish_stream_status(
+					status_queue,
+					self.config.output_port,
+					"failed",
+					"pipeline_start_failed",
+				)
+				restart_count += 1
+				delay = min(CAMERA_RESTART_BASE_SECONDS * (2 ** (restart_count - 1)), CAMERA_RESTART_MAX_SECONDS)
+				logger.warning(
+					f"[mosaic-{self.config.output_port}] pipeline failed to start; retrying in {delay:.1f}s (attempt #{restart_count})"
+				)
+				time.sleep(delay)
+				continue
+
+			_publish_stream_status(status_queue, self.config.output_port, "healthy", "pipeline_started")
+			logger.info(f"[mosaic-{self.config.output_port}] running GStreamer pipeline")
+			stopped_by_request = stream_pipeline.run_until_stopped(stop_event)
+			logger.info(f"[mosaic-{self.config.output_port}] cleaning up pipeline")
+			_publish_stream_status(
+				status_queue,
+				self.config.output_port,
+				"failed" if not stop_event.is_set() else "starting",
+				"pipeline_stopped" if not stop_event.is_set() else "shutdown_requested",
+			)
+
+			if stopped_by_request or stop_event.is_set():
+				break
+
+			restart_count += 1
+			delay = min(CAMERA_RESTART_BASE_SECONDS * (2 ** (restart_count - 1)), CAMERA_RESTART_MAX_SECONDS)
+			logger.warning(
+				f"[mosaic-{self.config.output_port}] pipeline stopped unexpectedly; restarting in {delay:.1f}s (attempt #{restart_count})"
+			)
+			time.sleep(delay)
 
 
 class StreamPipeline:
@@ -247,9 +422,8 @@ class StreamPipeline:
 			self.config.bitrate,
 			self.config.target_fps,
 			self.config.multicast_ip,
-			force_software=getattr(self.config, "force_software", False),
-			output_width=CAMERA_FRAME_WIDTH,
-			output_height=CAMERA_FRAME_HEIGHT,
+			output_width=self.config.output_width,
+			output_height=self.config.output_height,
 		)
 
 	def start(self) -> bool:
@@ -268,21 +442,6 @@ class StreamPipeline:
 			return True
 		except Exception as e:
 			logger.error(f"[stream-{self.config.port}] Failed to create GStreamer pipeline: {e}")
-			# If we haven't already forced software encoding, try that as a fallback
-			if not getattr(self.config, "force_software", False):
-				logger.info(f"[stream-{self.config.port}] Retrying with software encoder (fallback)")
-				setattr(self.config, "force_software", True)
-				try:
-					pipeline_str = self._build_pipeline()
-					self.pipeline = Gst.parse_launch(pipeline_str)
-					self.bus = self.pipeline.get_bus()
-					ret = self.pipeline.set_state(Gst.State.PLAYING)
-					if ret == Gst.StateChangeReturn.FAILURE:
-						raise RuntimeError("failed to set pipeline to PLAYING state (software)")
-					logger.info(f"[stream-{self.config.port}] GStreamer pipeline initialized (software encoder)")
-					return True
-				except Exception as e2:
-					logger.error(f"[stream-{self.config.port}] Fallback to software encoder failed: {e2}")
 			# give up
 			self.stop()
 			return False
@@ -299,29 +458,8 @@ class StreamPipeline:
 						if message.type == Gst.MessageType.ERROR:
 							err, debug = message.parse_error()
 							logger.error(f"[stream-{self.config.port}] GStreamer error: {err.message}; debug={debug}")
-							# If this looks like a v4l2 encoder frame handling failure, try runtime fallback to software encoder
-							err_text = (err.message or "").lower()
-							debug_text = (debug or "").lower()
-							if ("gst_v4l2_video_enc_handle_frame" in debug_text or "v4l2" in err_text or "v4l2" in debug_text) and not getattr(self.config, "force_software", False):
-								logger.info(f"[stream-{self.config.port}] Detected v4l2 encoder failure; attempting runtime fallback to software encoder")
-								# Attempt to restart with software encoder
-								self.stop()
-								setattr(self.config, "force_software", True)
-								try:
-									pipeline_str = self._build_pipeline()
-									logger.info(f"[stream-{self.config.port}] Restarting pipeline with software encoder: {pipeline_str}")
-									self.pipeline = Gst.parse_launch(pipeline_str)
-									self.bus = self.pipeline.get_bus()
-									ret = self.pipeline.set_state(Gst.State.PLAYING)
-									if ret == Gst.StateChangeReturn.FAILURE:
-										raise RuntimeError("failed to set pipeline to PLAYING state (runtime software)")
-									logger.info(f"[stream-{self.config.port}] Pipeline restarted with software encoder")
-								except Exception as e3:
-									logger.error(f"[stream-{self.config.port}] Runtime fallback failed: {e3}")
-									break
-							else:
-								logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
-								break
+							logger.info(f"[stream-{self.config.port}] GStreamer EOS received")
+							break
 				time.sleep(0.1)
 			return stop_event.is_set()
 		finally:
@@ -420,6 +558,12 @@ def handle_arguments():
 		choices=["on", "off"],
 		help="Keep restarting cameras even if all streams have failed",
 	)
+	parser.add_argument(
+		"--mosaic",
+		type=str,
+		choices=["on", "off"],
+		help="Combine all selected cameras into one mosaic stream",
+	)
 
 	try:
 		apply_required_external_defaults(parser, "streamer-only")
@@ -506,6 +650,8 @@ class MultiStreamer:
 					target_fps=target_fps,
 					multicast_ip=multicast_ip,
 					simulation=simulation,
+					output_width=320 if len(camera_ids) > 1 else CAMERA_FRAME_WIDTH,
+					output_height=320 if len(camera_ids) > 1 else CAMERA_FRAME_HEIGHT,
 				)
 			)
 			for idx, cam_id in enumerate(camera_ids)

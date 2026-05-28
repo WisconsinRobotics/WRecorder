@@ -29,6 +29,8 @@ from streamer_utils import (
 	resolve_local_ip,
 	handle_arguments,
 	MultiStreamer,
+	MosaicStreamer,
+	MosaicConfig,
 )
 
 logger = get_logger(__name__)
@@ -94,6 +96,8 @@ def announce_stream_config(
 	camera_ids: List[int],
 	discovery_port: int,
 	discovery_interval: float,
+	stream_count: int = None,
+	mosaic: bool = False,
 ):
 	"""Broadcast stream configuration over UDP for receiver auto-configuration."""
 	if not are_non_negative_ints(camera_ids, require_non_empty=True):
@@ -109,17 +113,22 @@ def announce_stream_config(
 		"streamer_name": streamer_name,
 		"streamer_ip": streamer_ip,
 		"base_port": base_port,
-		"stream_count": len(camera_ids),
+		"stream_count": len(camera_ids) if stream_count is None else stream_count,
 		"camera_ids": camera_ids,
+		"mosaic": mosaic,
 	}
+
+	print(json.dumps(payload, indent=2))
+
+	stream_count_value = len(camera_ids) if stream_count is None else stream_count
 
 	logger.info(
 		f"[discovery] Announcing '{streamer_name}' on UDP {discovery_port} "
-		f"(base_port={base_port}, streams={len(camera_ids)})"
+		f"(base_port={base_port}, streams={stream_count_value}, mosaic={mosaic})"
 	)
 	logger.info(
 		f"[discovery] payload: streamer_ip={streamer_ip}, camera_ids={camera_ids}, "
-		f"interval={interval:.2f}s, version={DISCOVERY_VERSION}"
+		f"interval={interval:.2f}s, version={DISCOVERY_VERSION}, mosaic={mosaic}"
 	)
 
 	try:
@@ -159,6 +168,7 @@ if __name__ == "__main__":
 	bitrate = args.bitrate
 	target_fps = args.target_fps
 	simulate_cameras = args.simulate_cameras
+	mosaic_enabled = args.mosaic.lower() == "on"
 	streamer_name = args.streamer_name
 	announce_discovery = args.announce_discovery.lower() == "on"
 	discovery_port = args.discovery_port
@@ -178,24 +188,56 @@ if __name__ == "__main__":
 		logger.error("No available cameras found. Exiting.")
 		exit(1)
 
-	max_port = base_port + len(camera_ids) - 1
-	if not has_valid_sequential_port_range(base_port, len(camera_ids)):
+	output_stream_count = 1 if mosaic_enabled else len(camera_ids)
+	max_port = base_port + output_stream_count - 1
+	if not has_valid_sequential_port_range(base_port, output_stream_count):
 		logger.error(
-			f"Invalid port range: base-port={base_port} with {len(camera_ids)} streams "
+			f"Invalid port range: base-port={base_port} with {output_stream_count} streams "
 			f"would exceed {VALID_PORT_MAX} (max={max_port})."
 		)
 		exit(2)
 
-	streamer = MultiStreamer(
-		base_port,
-		camera_ids,
-		bitrate,
-		target_fps,
-		MULTICAST_IP,
-		simulation=simulate_cameras is not None,
-		never_give_up=never_give_up,
-	)
-	streamer.start()
+	streamer_stop_event = None
+	stream_processes = []
+	if mosaic_enabled:
+		mosaic_camera_count = len(camera_ids)
+		mosaic_bitrate = bitrate * mosaic_camera_count
+		streamer_stop_event = multiprocessing.Event()
+		status_queue = multiprocessing.Queue()
+		mosaic_streamer = MosaicStreamer(
+			MosaicConfig(
+				output_port=base_port,
+				camera_ids=camera_ids,
+				bitrate=mosaic_bitrate,
+				target_fps=target_fps,
+				multicast_ip=MULTICAST_IP,
+				simulation=simulate_cameras is not None,
+			),
+		)
+		stream_process = multiprocessing.Process(
+			target=mosaic_streamer.start,
+			args=(streamer_stop_event, status_queue),
+			daemon=True,
+		)
+		stream_process.start()
+		stream_processes.append(stream_process)
+		logger.info(
+			f"Attempting to start mosaic stream for cameras {camera_ids} on port {base_port} "
+			f"with bitrate={mosaic_bitrate}"
+		)
+	else:
+		streamer = MultiStreamer(
+			base_port,
+			camera_ids,
+			bitrate,
+			target_fps,
+			MULTICAST_IP,
+			simulation=simulate_cameras is not None,
+			never_give_up=never_give_up,
+		)
+		streamer.start()
+		streamer_stop_event = streamer.stop_event
+		stream_processes = streamer.processes
 
 	discovery_thread = None
 	if announce_discovery:
@@ -203,7 +245,7 @@ if __name__ == "__main__":
 		discovery_thread = threading.Thread(
 			target=announce_stream_config,
 			args=(
-				streamer.stop_event,
+				streamer_stop_event,
 				streamer_name,
 				streamer_ip,
 				MULTICAST_IP,
@@ -211,6 +253,8 @@ if __name__ == "__main__":
 				camera_ids,
 				discovery_port,
 				discovery_interval,
+				len(camera_ids),
+				mosaic_enabled,
 			),
 			daemon=True,
 		)
@@ -218,21 +262,30 @@ if __name__ == "__main__":
 
 	ros2_thread = threading.Thread(
 		target=ros2_command_thread,
-		args=(camera_ids, streamer.stop_event),
-		daemon=True
+		args=(camera_ids, streamer_stop_event),
+		daemon=True,
 	)
 	ros2_thread.start()
 
-	install_stop_signal_handlers(streamer.stop_event.set, logger, "Stopping streams...")
+	install_stop_signal_handlers(streamer_stop_event.set, logger, "Stopping streams...")
 
 	try:
-		streamer.supervise()
+		if mosaic_enabled:
+			while not streamer_stop_event.is_set():
+				for p in stream_processes:
+					if not p.is_alive():
+						logger.error(f"Mosaic streamer process {p.pid} exited unexpectedly (code={p.exitcode})")
+						streamer_stop_event.set()
+						break
+				time.sleep(0.1)
+		else:
+			streamer.supervise()
 	except KeyboardInterrupt:
 		logger.info("Keyboard interrupt received. Stopping streams...")
-		streamer.stop_event.set()
+		streamer_stop_event.set()
 	finally:
-		streamer.stop_event.set()
-		for p in streamer.processes:
+		streamer_stop_event.set()
+		for p in stream_processes:
 			p.join(timeout=1.0)
 			if p.is_alive():
 				logger.warning(f"Streamer process {p.pid} did not exit cleanly, terminating...")
