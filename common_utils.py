@@ -217,5 +217,20 @@ def int_in_range(name: str, minimum: int, maximum: int = None):
 
 	return _validator
 
+def float_in_range(name: str, minimum: float, maximum: float = None):
+	def _validator(value: str) -> float:
+		try:
+			parsed = float(value)
+		except ValueError as exc:
+			raise argparse.ArgumentTypeError(f"{name} must be a float") from exc
+		if parsed < minimum:
+			upper = f" and <= {maximum}" if maximum is not None else ""
+			raise argparse.ArgumentTypeError(f"{name} must be >= {minimum}{upper}")
+		if maximum is not None and parsed > maximum:
+			raise argparse.ArgumentTypeError(f"{name} must be <= {maximum}")
+		return parsed
+
+	return _validator
+
 def clamp[T](value: T, minimum: T, maximum: T) -> T: # generics in python lmao
 	return max(minimum, min(maximum, value))

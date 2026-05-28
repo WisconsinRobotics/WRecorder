@@ -76,9 +76,10 @@ By default, receiver uses `auto-config=on` to auto-discover available streamers 
 | `--base-port` | Starting port for first camera stream; additional streams use `base-port + index` | `5555` | `1-65535` |
 | `--camera-ids` | Space-separated camera IDs | `[0]` | Camera device indices (e.g., `0 2 4`) |
 | `--auto-find-cameras` | Auto-detect cameras and override `--camera-ids` | `on` | `on\|off` |
-| `--bitrate` | Target H.264 stream bitrate | `250000` | bps (`>= 1`) |
+| `--bitrate` | Target H.264 stream bitrate | `500000` | bps (`>= 1`) |
 | `--target-fps` | Target stream FPS | `30` | `>= 1` |
 | `--simulate-cameras` | Simulate N cameras instead of real devices | `null` (disabled) | `>= 1` or `null` |
+| `--simulate-loss` | Simulate network packet loss percentage | `0.0` | `0.0` - `100.0` |
 | `--streamer-name` | Discovery identity name for receiver filtering | `wrecorder-streamer` | String |
 | `--announce-discovery` | Broadcast discovery metadata (streamer name + port range) | `on` | `on\|off` |
 | `--discovery-port` | UDP discovery port | `5550` | `1-65535` |

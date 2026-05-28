@@ -9,6 +9,7 @@
     "bitrate": 500000,
     "target_fps": 30,
     "simulate_cameras": null,
+    "simulate_loss": 0.0,
     "streamer_name": "wrecorder-streamer",
     "announce_discovery": "on",
     "discovery_interval": 1.0,

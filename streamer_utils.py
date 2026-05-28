@@ -12,6 +12,7 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst  # noqa: E402
 from common_utils import (  # noqa: E402
 	int_in_range,
+	float_in_range,
 	apply_required_external_defaults,
 	VALID_PORT_MIN,
 	VALID_PORT_MAX,
@@ -30,7 +31,7 @@ CAMERA_RESTART_MAX_SECONDS = 10
 STARTUP_STAGGER_SECONDS = 1
 MOSAIC_TILE_WIDTH = 320
 MOSAIC_TILE_HEIGHT = 320
-LOW_LATENCY_QUEUE = "queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0"
+LOW_LATENCY_QUEUE = "queue leaky=downstream max-size-buffers=5 max-size-bytes=0 max-size-time=0"
 
 VIDEOTEST_PATTERNS = [
 	"smpte",
@@ -178,6 +179,7 @@ def _build_encoder_pipeline(
 	bitrate: int,
 	target_fps: int,
 	multicast_ip: str,
+	simulate_loss: float = 0.0,
 	output_width: int = CAMERA_FRAME_WIDTH,
 	output_height: int = CAMERA_FRAME_HEIGHT,
 ) -> str:
@@ -190,7 +192,7 @@ def _build_encoder_pipeline(
 	logger.info(f"[stream-{port}] Using software encoder x264enc")
 	kbps = max(1, bitrate // 1000)
 	encoder_chain = (
-		f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(target_fps)} bframes=0 ! '
+		f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={max(1, int(target_fps // 2))} bframes=0 ! '
 		"h264parse"
 	)
 
@@ -198,6 +200,7 @@ def _build_encoder_pipeline(
 		" ! ".join(video_chain)
 		+ f" ! {LOW_LATENCY_QUEUE} ! "
 		+ encoder_chain
+		+ ("" if simulate_loss <= 0.0 else f" ! identity drop-probability={simulate_loss / 100.0} ")
 		+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={multicast_ip} port={port} auto-multicast=true sync=false async=false"
 	)
 
@@ -211,6 +214,7 @@ class StreamerConfig:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
+		simulate_loss: float = 0.0,
 		output_width: int = CAMERA_FRAME_WIDTH,
 		output_height: int = CAMERA_FRAME_HEIGHT,
 	):
@@ -220,6 +224,7 @@ class StreamerConfig:
 		self.target_fps = target_fps
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
+		self.simulate_loss = simulate_loss
 		self.output_width = output_width
 		self.output_height = output_height
 
@@ -233,6 +238,7 @@ class MosaicConfig:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
+		simulate_loss: float = 0.0,
 	):
 		self.output_port = output_port
 		self.camera_ids = camera_ids
@@ -240,6 +246,7 @@ class MosaicConfig:
 		self.target_fps = target_fps
 		self.multicast_ip = multicast_ip
 		self.simulation = simulation
+		self.simulate_loss = simulate_loss
 
 
 class MosaicPipeline:
@@ -288,13 +295,14 @@ class MosaicPipeline:
 		logger.info(f"[mosaic-{self.config.output_port}] Using software encoder x264enc")
 		kbps = max(1, self.config.bitrate // 1000)
 		encoder_chain = (
-			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={int(self.config.target_fps)} bframes=0 ! '
+			f'x264enc tune=zerolatency bitrate={kbps} speed-preset=ultrafast key-int-max={max(1, int(self.config.target_fps // 2))} bframes=0 ! '
 			"h264parse"
 		)
 
 		return (
 			f"{mosaic_source} {compositor} ! videoconvert ! video/x-raw,format=I420,width={output_width},height={output_height} ! {LOW_LATENCY_QUEUE} ! "
 			+ encoder_chain
+			+ ("" if self.config.simulate_loss <= 0.0 else f" ! identity drop-probability={self.config.simulate_loss / 100.0} ")
 			+ f" ! rtph264pay config-interval=1 pt=96 ! udpsink host={self.config.multicast_ip} port={self.config.output_port} auto-multicast=true sync=false async=false"
 		)
 
@@ -532,6 +540,11 @@ def handle_arguments():
 		help="Simulate N cameras instead of real cameras (for testing)",
 	)
 	parser.add_argument(
+		"--simulate-loss",
+		type=float_in_range("simulate-loss", 0.0, 100.0),
+		help="Simulate network packet loss percentage (0.0 to 100.0)",
+	)
+	parser.add_argument(
 		"--streamer-name",
 		type=str,
 		help="Name announced during discovery (used by receiver filter)",
@@ -639,6 +652,7 @@ class MultiStreamer:
 		target_fps: int,
 		multicast_ip: str,
 		simulation: bool = False,
+		simulate_loss: float = 0.0,
 		never_give_up: bool = False,
 	):
 		self.streamers = [
@@ -650,6 +664,7 @@ class MultiStreamer:
 					target_fps=target_fps,
 					multicast_ip=multicast_ip,
 					simulation=simulation,
+					simulate_loss=simulate_loss,
 					output_width=320 if len(camera_ids) > 1 else CAMERA_FRAME_WIDTH,
 					output_height=320 if len(camera_ids) > 1 else CAMERA_FRAME_HEIGHT,
 				)

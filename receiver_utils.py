@@ -135,7 +135,7 @@ class SingleReceiver:
 		pipeline_str = (
 			f"udpsrc multicast-group={MULTICAST_IP} port={self.port} auto-multicast=true ! "
 			"application/x-rtp,media=video,clock-rate=90000,payload=96,encoding-name=H264 ! "
-			"rtpjitterbuffer latency=0 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! appsink name=appsink emit-signals=true max-buffers=1 drop=true sync=false"
+			"rtpjitterbuffer latency=100 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! appsink name=appsink emit-signals=true max-buffers=5 drop=true sync=false"
 		)
 		window_name = f"{self.window_prefix}-{self.port}"
 		logger.info(f"[{window_name}] Attempting to connect to multicast {MULTICAST_IP}:{self.port}...")

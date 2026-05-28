@@ -168,6 +168,7 @@ if __name__ == "__main__":
 	bitrate = args.bitrate
 	target_fps = args.target_fps
 	simulate_cameras = args.simulate_cameras
+	simulate_loss = args.simulate_loss
 	mosaic_enabled = args.mosaic.lower() == "on"
 	streamer_name = args.streamer_name
 	announce_discovery = args.announce_discovery.lower() == "on"
@@ -212,6 +213,7 @@ if __name__ == "__main__":
 				target_fps=target_fps,
 				multicast_ip=MULTICAST_IP,
 				simulation=simulate_cameras is not None,
+				simulate_loss=simulate_loss,
 			),
 		)
 		stream_process = multiprocessing.Process(
@@ -233,6 +235,7 @@ if __name__ == "__main__":
 			target_fps,
 			MULTICAST_IP,
 			simulation=simulate_cameras is not None,
+			simulate_loss=simulate_loss,
 			never_give_up=never_give_up,
 		)
 		streamer.start()
