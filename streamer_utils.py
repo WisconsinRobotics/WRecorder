@@ -63,21 +63,32 @@ VIDEOTEST_PATTERNS = [
 ]
 
 
-def resolve_local_ip() -> str:
+def resolve_local_ip(only_eth0: bool = False) -> str:
 	env_ip = os.environ.get("WRECORDER_STREAMER_IP")
 	if env_ip:
 		return env_ip
 
-	result = subprocess.run(["hostname", "-I"], capture_output=True, text=True)
-	if result.stdout:
+	if only_eth0:
 		try:
-			# Return the first non-loopback IP address
-			for ip_str in result.stdout.strip().split():
-				ip = ipaddress.ip_address(ip_str)
-				if not ip.is_loopback:
-					return ip_str
+			result = subprocess.run(["ip", "-4", "addr", "show", "eth0"], capture_output=True, text=True)
+			if result.stdout:
+				for line in result.stdout.splitlines():
+					if "inet " in line:
+						ip_str = line.strip().split()[1].split('/')[0]
+						return ip_str
 		except Exception as e:
-			logger.error(f"Error parsing local IP addresses: {e}")
+			logger.error(f"Error parsing eth0 IP address: {e}")
+	else:
+		result = subprocess.run(["hostname", "-I"], capture_output=True, text=True)
+		if result.stdout:
+			try:
+				# Return the first non-loopback IP address
+				for ip_str in result.stdout.strip().split():
+					ip = ipaddress.ip_address(ip_str)
+					if not ip.is_loopback:
+						return ip_str
+			except Exception as e:
+				logger.error(f"Error parsing local IP addresses: {e}")
 
 	return "127.0.0.1"
 
@@ -619,6 +630,11 @@ def handle_arguments():
 		type=str,
 		choices=["on", "off"],
 		help="Combine all selected cameras into one mosaic stream",
+	)
+	parser.add_argument(
+		"--only-eth0",
+		action="store_true",
+		help="Only bind to eth0 interface IP address",
 	)
 
 	try:

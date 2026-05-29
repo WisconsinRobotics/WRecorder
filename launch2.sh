@@ -31,5 +31,6 @@ export WRECORDER_STREAMER_IP="$READY_IP"
     --auto-find-cameras on \
     --target-fps 30 \
     --never-give-up on \
-    --mosaic on
+    --mosaic on \
+    --only-eth0
 

@@ -15,7 +15,8 @@
     "announce_discovery": "on",
     "discovery_interval": 1.0,
     "never_give_up": "off",
-    "mosaic": "off"
+    "mosaic": "off",
+    "only_eth0": false
   },
   "receiver-only": {
     "broadcast_ip": "0.0.0.0",

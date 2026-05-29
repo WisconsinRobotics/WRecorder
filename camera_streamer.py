@@ -282,7 +282,7 @@ if __name__ == "__main__":
 
 	discovery_thread = None
 	if announce_discovery:
-		streamer_ip = resolve_local_ip()
+		streamer_ip = resolve_local_ip(args.only_eth0)
 		discovery_thread = threading.Thread(
 			target=announce_stream_config,
 			args=(
